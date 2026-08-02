@@ -1,0 +1,8 @@
+*.png
+*.xml
+*.py
+*.txt
+log.txt
+log.txt.old
+node_modules/
+.DS_Store

@@ -9,6 +9,7 @@ Run with:
 """
 
 import unittest
+import subprocess
 import sys
 import os
 import xml.etree.ElementTree as ET
@@ -473,19 +474,38 @@ class TestConfigConsistency(unittest.TestCase):
 # ------------------------------------------------------------------
 
 class TestNativeDumpTexts(unittest.TestCase):
-    """native_dump_texts uses adb shell uiautomator dump as fallback."""
+    """native_dump_texts uses subprocess to call adb uiautomator dump."""
+
+    def setUp(self):
+        self._orig_run = subprocess.run
+
+    def tearDown(self):
+        subprocess.run = self._orig_run
+
+    def _mock_subprocess_run(self, xml_text):
+        """Create a mock subprocess.run that returns xml for cat, ok for dump."""
+        def fake_run(cmd, **kwargs):
+            if "dump" in cmd:
+                return type("R", (), {"returncode": 0, "stdout": "OK", "stderr": ""})()
+            elif "cat" in cmd:
+                return type("R", (), {"stdout": xml_text.encode("utf-8")})()
+            elif "rm" in cmd:
+                return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        return fake_run
 
     def test_returns_texts_from_xml(self):
-        xml = make_xml([{"text": "hello"}, {"text": "world"}])
+        xml = make_xml([{"text": "hello"}, {"text": "world"}] +
+                       [{"text": ""}] * 20)  # pad to exceed min_nodes
         d = MockDevice(xml=xml)
-        # MockDevice.shell already pads XML with enough nodes
+        subprocess.run = self._mock_subprocess_run(xml)
         texts, raw = native_dump_texts(d)
         self.assertIn("hello", texts)
         self.assertIn("world", texts)
 
     def test_returns_empty_on_failure(self):
         d = MockDevice()
-        d.shell = lambda cmd: (_ for _ in ()).throw(Exception("fail"))
+        subprocess.run = self._mock_subprocess_run("")
         texts, raw = native_dump_texts(d)
         self.assertEqual(texts, [])
         self.assertEqual(raw, "")
@@ -494,10 +514,27 @@ class TestNativeDumpTexts(unittest.TestCase):
 class TestDismissLocationPopup(unittest.TestCase):
     """dismiss_location_popup detects and clicks confirm on location error popup."""
 
+    def setUp(self):
+        self._orig_run = subprocess.run
+
+    def tearDown(self):
+        subprocess.run = self._orig_run
+
+    def _mock_subprocess_run(self, xml_text):
+        def fake_run(cmd, **kwargs):
+            if "dump" in cmd:
+                return type("R", (), {"returncode": 0, "stdout": "OK", "stderr": ""})()
+            elif "cat" in cmd:
+                return type("R", (), {"stdout": xml_text.encode("utf-8")})()
+            elif "rm" in cmd:
+                return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        return fake_run
+
     def test_no_popup_returns_false(self):
-        xml = make_xml([{"text": T["checkin"]}])
+        xml = make_xml([{"text": T["checkin"]}] + [{"text": ""}] * 20)
         d = MockDevice(xml=xml)
-        d.shell = lambda cmd: type("R", (), {"output": xml})()
+        subprocess.run = self._mock_subprocess_run(xml)
         result = dismiss_location_popup(d)
         self.assertFalse(result)
 
@@ -505,9 +542,9 @@ class TestDismissLocationPopup(unittest.TestCase):
         xml = make_xml([
             {"text": T["locationError"]},
             {"text": T["confirm"], "bounds": "[162,1458][918,1614]"},
-        ])
+        ] + [{"text": ""}] * 20)
         d = MockDevice(xml=xml)
-        d.shell = lambda cmd: type("R", (), {"output": xml})()
+        subprocess.run = self._mock_subprocess_run(xml)
         result = dismiss_location_popup(d)
         self.assertTrue(result)
         self.assertEqual(len(d.clicked), 1)

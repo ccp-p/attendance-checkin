@@ -106,14 +106,10 @@ def shot(d, name):
 def dump_texts(d):
     """Return (list_of_texts, raw_xml) from the accessibility tree.
 
-    Primary: adb shell uiautomator dump (more reliable, captures webview
-    internal nodes that u2 dump_hierarchy misses).
-    Fallback: u2 dump_hierarchy() if native dump fails.
+    Uses u2 dump_hierarchy() as primary. For webview elements that u2
+    misses (popups, buttons), callers can use native_dump_texts() which
+    uses adb shell uiautomator dump directly.
     """
-    texts, xml = native_dump_texts(d)
-    if texts:
-        return texts, xml
-    # fallback: u2 dump
     xml = d.dump_hierarchy()
     root = ET.fromstring(xml)
     texts = []
@@ -125,25 +121,30 @@ def dump_texts(d):
         if c and c.strip():
             texts.append(c.strip())
     return texts, xml
-
 def native_dump_texts(d, min_nodes=15, retries=2):
     """Dump accessibility tree via adb shell uiautomator dump.
 
-    Uses a unique temp file per call to avoid reading stale data
-    from a previous dump. Checks the dump command output for errors.
+    Uses subprocess to call adb directly ? u2 d.shell() kills the
+    uiautomator process (exit_code 137, OOM) before it finishes.
     Returns (list_of_texts, raw_xml).
     """
     tmp_file = f"/sdcard/ui_native_{int(time.time() * 1000)}.xml"
     for attempt in range(retries):
         try:
-            # Use unique temp file to avoid stale data
-            result = d.shell(f"uiautomator dump {tmp_file}")
-            output = result.output.strip() if hasattr(result, "output") else str(result)
-            if "null root" in output or "ERROR" in output:
-                log(f"  native_dump attempt {attempt+1}: dump failed ({output[:60]})", "WARN")
+            # Use subprocess directly (d.shell kills uiautomator)
+            r = subprocess.run(
+                ["adb", "shell", "uiautomator", "dump", tmp_file],
+                capture_output=True, text=True, timeout=30,
+            )
+            if r.returncode != 0 or "ERROR" in r.stdout:
+                log(f"  native_dump attempt {attempt+1}: dump failed", "WARN")
                 time.sleep(0.5)
                 continue
-            raw = d.shell(f"cat {tmp_file}").output
+            r2 = subprocess.run(
+                ["adb", "shell", "cat", tmp_file],
+                capture_output=True, timeout=10,
+            )
+            raw = r2.stdout.decode("utf-8", errors="replace")
             if not raw or not raw.strip():
                 log(f"  native_dump attempt {attempt+1}: empty file", "WARN")
                 time.sleep(0.5)
@@ -160,17 +161,17 @@ def native_dump_texts(d, min_nodes=15, retries=2):
                     texts.append(c.strip())
             if node_count >= min_nodes or attempt == retries - 1:
                 if node_count < min_nodes:
-                    log(f"  native_dump returned {node_count} nodes (expected >={min_nodes})", "WARN")
-                # Cleanup temp file
-                d.shell(f"rm -f {tmp_file}")
+                    log(f"  native_dump returned {node_count} nodes", "WARN")
+                subprocess.run(["adb", "shell", "rm", "-f", tmp_file],
+                               capture_output=True, timeout=5)
                 return texts, raw
             time.sleep(0.5)
         except Exception as e:
             log(f"  native_dump_texts attempt {attempt+1} failed: {e}", "WARN")
             time.sleep(0.5)
-    # Cleanup
     try:
-        d.shell(f"rm -f {tmp_file}")
+        subprocess.run(["adb", "shell", "rm", "-f", tmp_file],
+                       capture_output=True, timeout=5)
     except Exception:
         pass
     return [], ""
@@ -266,7 +267,7 @@ def detect_state(d):
 def click_any(d, label, timeout=10):
     """Click by text. Primary: native dump XML bounds; fallback: u2 selector."""
     # strategy 1: native dump XML bounds (primary)
-    texts, xml = dump_texts(d)
+    texts, xml = native_dump_texts(d)
     if label in " ".join(texts):
         if click_xml_bounds(d, xml, label):
             return True
@@ -349,7 +350,7 @@ def do_checkin(d):
     log("STEP 3: 签到/签退 (webview, retry up to 6)")
     dismiss_location_popup(d)
     for i in range(6):
-        texts, xml = dump_texts(d)
+        texts, xml = native_dump_texts(d)
         all_text = " ".join(texts)
         for label in (T["checkin"], T["checkout"]):
             if label in all_text:
@@ -624,7 +625,7 @@ def handle_trusted_auth(d):
     log("STEP 10: check 可信认证 (trusted authentication)...")
 
     for i in range(6):
-        texts, xml = dump_texts(d)
+        texts, xml = native_dump_texts(d)
         all_text = " ".join(texts)
 
         if T["trustedAuth"] in all_text:

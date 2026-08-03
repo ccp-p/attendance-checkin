@@ -129,19 +129,25 @@ def dump_texts(d):
 def native_dump_texts(d, min_nodes=15, retries=2):
     """Dump accessibility tree via adb shell uiautomator dump.
 
-    u2 dump_hierarchy() sometimes misses webview-internal nodes
-    (e.g. location-error popups inside the attendance webview).
-    The native uiautomator dump is more reliable for those cases.
-
-    During page transitions the dump can return an incomplete tree
-    (very few nodes). We retry up to `retries` times if the node count
-    is below `min_nodes` to avoid acting on stale/partial data.
+    Uses a unique temp file per call to avoid reading stale data
+    from a previous dump. Checks the dump command output for errors.
     Returns (list_of_texts, raw_xml).
     """
+    tmp_file = f"/sdcard/ui_native_{int(time.time() * 1000)}.xml"
     for attempt in range(retries):
         try:
-            d.shell("uiautomator dump /sdcard/ui_native.xml")
-            raw = d.shell("cat /sdcard/ui_native.xml").output
+            # Use unique temp file to avoid stale data
+            result = d.shell(f"uiautomator dump {tmp_file}")
+            output = result.output.strip() if hasattr(result, "output") else str(result)
+            if "null root" in output or "ERROR" in output:
+                log(f"  native_dump attempt {attempt+1}: dump failed ({output[:60]})", "WARN")
+                time.sleep(0.5)
+                continue
+            raw = d.shell(f"cat {tmp_file}").output
+            if not raw or not raw.strip():
+                log(f"  native_dump attempt {attempt+1}: empty file", "WARN")
+                time.sleep(0.5)
+                continue
             root = ET.fromstring(raw)
             node_count = sum(1 for _ in root.iter())
             texts = []
@@ -155,14 +161,19 @@ def native_dump_texts(d, min_nodes=15, retries=2):
             if node_count >= min_nodes or attempt == retries - 1:
                 if node_count < min_nodes:
                     log(f"  native_dump returned {node_count} nodes (expected >={min_nodes})", "WARN")
+                # Cleanup temp file
+                d.shell(f"rm -f {tmp_file}")
                 return texts, raw
             time.sleep(0.5)
         except Exception as e:
             log(f"  native_dump_texts attempt {attempt+1} failed: {e}", "WARN")
             time.sleep(0.5)
+    # Cleanup
+    try:
+        d.shell(f"rm -f {tmp_file}")
+    except Exception:
+        pass
     return [], ""
-
-
 def dismiss_location_popup(d):
     """Detect and dismiss the ???????? popup that sometimes
     appears over the attendance webview.  u2 dump misses it, so

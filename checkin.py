@@ -121,6 +121,58 @@ def print_screen(d, label="screen"):
     log(f"  [{label}] texts({len(texts)}): {texts[:25]}")
 
 
+def detect_state(d):
+    """Inspect current screen and return (state, texts) so main() can
+    resume from the right step instead of restarting from scratch.
+
+    States:
+      not_in_app      - wrong package, need to launch
+      home            - app home with bottom tabs, not on workbench
+      workbench       - 工作台 tab selected, 考勤打卡 visible
+      attendance      - 考勤打卡 page with 签到 button (not logged in)
+      login_phone     - login page, 获取验证码 visible (need phone + code req)
+      code_countdown  - login page, countdown active (code already sent)
+      code_input      - login page, EditText waiting for code
+      logged_in       - already logged in, showing 打卡记录 / 签退
+      unknown         - can't determine
+    """
+    pkg = d.app_current().get("package", "")
+    texts, _ = dump_texts(d)
+    all_text = " ".join(texts)
+
+    if pkg != APP_PACKAGE:
+        return "not_in_app", texts
+
+    # already logged in: shows 签退 or 打卡记录
+    if "签退" in all_text or ("上班" in all_text and "打卡时间" in all_text):
+        return "logged_in", texts
+
+    # attendance page with 签到 button (not yet logged in)
+    if T["checkin"] in all_text:
+        return "attendance", texts
+
+    # login page: code already requested (countdown visible)
+    if T["smsLogin"] in all_text and re.search(r"\d{1,2}\s*s", all_text):
+        return "code_countdown", texts
+
+    # login page: 获取验证码 visible (need to input phone + request code)
+    if T["getCode"] in all_text or T["smsLogin"] in all_text:
+        # check if EditText is present (code input phase)
+        if d(className="android.widget.EditText").exists(timeout=1):
+            return "code_input", texts
+        return "login_phone", texts
+
+    # workbench: 考勤打卡 entry visible
+    if T["attendance"] in all_text:
+        return "workbench", texts
+
+    # home: 工作台 tab visible
+    if T["tabWorkbench"] in all_text:
+        return "home", texts
+
+    return "unknown", texts
+
+
 def click_any(d, label, timeout=10):
     """Click by exact text, then contains-text. Returns True on success."""
     el = d(text=label)
@@ -492,47 +544,72 @@ def main():
     log(f"device: {info.get('productName')} {info.get('displayWidth')}x{info.get('displayHeight')}")
 
     try:
-        launch_app(d)
+        # --- detect current state, resume from the right step ---
+        state, texts = detect_state(d)
+        log(f"detected state: {state}")
+        if texts:
+            log(f"  screen texts: {texts[:15]}")
 
-        if not go_workbench(d):
-            log("failed: workbench", "ERROR")
-            shot(d, "fail_workbench")
-            return
-
-        if not open_attendance(d):
-            log("failed: attendance", "ERROR")
-            shot(d, "fail_attendance")
-            return
-
-        if not do_checkin(d):
-            log("failed: checkin button", "ERROR")
-            shot(d, "fail_checkin")
-            return
-
-        input_phone(d)
-        click_sms_login(d)
-        if not request_code(d):
-            log("failed: request code", "ERROR")
-            shot(d, "fail_request_code")
-            return
-
-        code = retrieve_code(d)
-        if not code:
-            log("failed: no verification code", "ERROR")
-            shot(d, "fail_no_code")
-            return
-
-        input_code(d, code)
-        submit_login(d)
-
-        # NEW: handle 可信认证 if it appears
-        handle_trusted_auth(d)
-
-        ok = check_result(d)
-        if ok:
+        if state == "logged_in":
+            log("already logged in, nothing to do", "OK")
             log("====== checkin success ======", "OK")
-        else:
-            log("====== checkin uncertain ======", "WARN")
+            return
+
+        if state == "not_in_app" or state == "unknown":
+            launch_app(d)
+            state, _ = detect_state(d)
+            log(f"  state after launch: {state}")
+
+        if state == "home":
+            if not go_workbench(d):
+                log("failed: workbench", "ERROR")
+                shot(d, "fail_workbench")
+                return
+            state, _ = detect_state(d)
+
+        if state == "workbench":
+            if not open_attendance(d):
+                log("failed: attendance", "ERROR")
+                shot(d, "fail_attendance")
+                return
+            state, _ = detect_state(d)
+
+        if state == "attendance":
+            if not do_checkin(d):
+                log("failed: checkin button", "ERROR")
+                shot(d, "fail_checkin")
+                return
+            state, _ = detect_state(d)
+
+        # after clicking 签到, should be on login page
+        if state in ("login_phone", "code_input", "code_countdown", "unknown"):
+            if state == "login_phone":
+                input_phone(d)
+                click_sms_login(d)
+                if not request_code(d):
+                    log("failed: request code", "ERROR")
+                    shot(d, "fail_request_code")
+                    return
+                state = "code_countdown"
+
+            if state == "code_countdown":
+                code = retrieve_code(d)
+                if not code:
+                    log("failed: no verification code", "ERROR")
+                    shot(d, "fail_no_code")
+                    return
+                input_code(d, code)
+
+            submit_login(d)
+
+            # handle 可信认证 if it appears
+            handle_trusted_auth(d)
+
+            ok = check_result(d)
+            if ok:
+                log("====== checkin success ======", "OK")
+            else:
+                log("====== checkin uncertain ======", "WARN")
 
     except Exception as e:
         log(f"exception: {e}", "ERROR")
@@ -546,7 +623,3 @@ def main():
     finally:
         _push_log_to_phone(d)
         _close_log()
-
-
-if __name__ == "__main__":
-    main()

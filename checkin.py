@@ -130,9 +130,8 @@ def detect_state(d):
       home            - app home with bottom tabs, not on workbench
       workbench       - workbench tab selected, attendance visible
       attendance      - attendance page with checkin button
-      login_phone     - login page, get-code button visible
+      login_phone     - login page (need phone input + sms login + get code)
       code_countdown  - login page, countdown active (code already sent)
-      code_input      - login page, get-code gone (code sent, waiting input)
       unknown         - cannot determine
     """
     pkg = d.app_current().get("package", "")
@@ -146,17 +145,18 @@ def detect_state(d):
     if T["checkin"] in all_text:
         return "attendance", texts
 
-    # login page: countdown active (code already sent)
-    if T["smsLogin"] in all_text and re.search(r"\d{1,2}\s*s", all_text):
-        return "code_countdown", texts
-
     # login page: 获取验证码 button visible (need phone + request code)
     if T["getCode"] in all_text:
         return "login_phone", texts
 
-    # login page: sms login visible but no get-code button (code already sent)
+    # login page: countdown active (code already sent, button changed to countdown)
+    if T["smsLogin"] in all_text and (re.search(r"\d{1,2}s", all_text) or "重新获取" in all_text or "重发" in all_text):
+        return "code_countdown", texts
+
+    # login page: smsLogin visible but getCode not yet visible
+    # (getCode appears only AFTER clicking 短信验证码登录 to switch to SMS mode)
     if T["smsLogin"] in all_text:
-        return "code_input", texts
+        return "login_phone", texts
 
     # workbench: 考勤打卡 entry visible
     if T["attendance"] in all_text:
@@ -215,6 +215,9 @@ def click_xml_bounds(d, xml_str, keyword):
 # ------------------------------------------------------------------
 def launch_app(d):
     log("STEP 0: launch app")
+    # press home to clear foreground app (e.g. WeChat floating over screen)
+    d.press("home")
+    time.sleep(1)
     d.app_start(APP_PACKAGE, wait=True)
     time.sleep(TO["appLaunch"])
     log(f"  current package: {d.app_current().get('package')}")
@@ -258,6 +261,38 @@ def do_checkin(d):
     return False
 
 
+def wait_for_login_page(d, timeout=20):
+    """After clicking 签到, poll for login page elements to appear
+    in the accessibility tree (webview loads slowly)."""
+    log("  waiting for login page to load...")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        texts, _ = dump_texts(d)
+        all_text = " ".join(texts)
+        if T["getCode"] in all_text or T["smsLogin"] in all_text:
+            log(f"  login page loaded (texts: {texts[:8]})")
+            return True
+        time.sleep(1)
+    log("  login page not loaded within timeout", "WARN")
+    print_screen(d, "wait_login_timeout")
+    return False
+
+
+def wait_for_text(d, text, timeout=15, label=""):
+    """Poll for a specific text to appear in the accessibility tree."""
+    label = label or text
+    log(f"  waiting for [{label}] to appear...")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        texts, _ = dump_texts(d)
+        if text in " ".join(texts):
+            log(f"  [{label}] found")
+            return True
+        time.sleep(1)
+    log(f"  [{label}] not found within {timeout}s", "WARN")
+    return False
+
+
 def input_phone(d):
     log("STEP 4: input phone last-4 (custom keypad)")
     for ch in PHONE_INPUT:
@@ -275,8 +310,17 @@ def input_phone(d):
 
 def click_sms_login(d):
     log("STEP 5: 短信验证码登录 (switch to SMS mode)")
-    click_any(d, T["smsLogin"])
-    time.sleep(2)
+    if not click_any(d, T["smsLogin"]):
+        return False
+    # getCode button appears after switching to SMS mode; wait for it
+    for i in range(10):
+        time.sleep(1)
+        texts, _ = dump_texts(d)
+        if T["getCode"] in " ".join(texts):
+            log(f"  获取验证码 button appeared (after {i+1}s)")
+            return True
+    log("  获取验证码 button not appeared after sms login", "WARN")
+    return True
 
 
 def request_code(d):
@@ -553,7 +597,7 @@ def main():
                 time.sleep(3)
                 state, _ = detect_state(d)
                 log(f"  state after launch: {state}")
-                if state != "unknown":
+                if state not in ("unknown", "not_in_app"):
                     break
 
         if state == "home":
@@ -561,6 +605,7 @@ def main():
                 log("failed: workbench", "ERROR")
                 shot(d, "fail_workbench")
                 return
+            wait_for_text(d, T["attendance"], timeout=10, label="考勤打卡入口")
             state, _ = detect_state(d)
 
         if state == "workbench":
@@ -568,6 +613,8 @@ def main():
                 log("failed: attendance", "ERROR")
                 shot(d, "fail_attendance")
                 return
+            # attendance page is a webview — wait for 签到 button to appear
+            wait_for_text(d, T["checkin"], timeout=15, label="签到按钮")
             state, _ = detect_state(d)
 
         if state == "attendance":
@@ -575,10 +622,13 @@ def main():
                 log("failed: checkin button", "ERROR")
                 shot(d, "fail_checkin")
                 return
+            # login page is a webview — wait for it to load before detecting state
+            wait_for_login_page(d, timeout=20)
             state, _ = detect_state(d)
+            log(f"  state after checkin: {state}")
 
         # guard: must be on a login page to continue
-        if state not in ("login_phone", "code_countdown", "code_input"):
+        if state not in ("login_phone", "code_countdown"):
             log(f"unexpected state: {state}, cannot continue", "ERROR")
             shot(d, "fail_unexpected_state")
             print_screen(d, "fail_unexpected_state")
@@ -587,7 +637,12 @@ def main():
         # --- login phase: sequential, no state jumping ---
         if state == "login_phone":
             input_phone(d)
-            click_sms_login(d)
+            # only click smsLogin if getCode not yet visible
+            texts, _ = dump_texts(d)
+            if T["getCode"] not in " ".join(texts):
+                click_sms_login(d)
+            else:
+                log("  获取验证码 already visible, skip sms login click")
             if not request_code(d):
                 log("failed: request code", "ERROR")
                 shot(d, "fail_request_code")

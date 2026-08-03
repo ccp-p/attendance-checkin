@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 //  attendance checkin config (calibrated on real device)
 //  device: OPPO PJZ110  1080x2376
 //  app package: com.cmri.ercs.yqx

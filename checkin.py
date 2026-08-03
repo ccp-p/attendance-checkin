@@ -560,6 +560,11 @@ def main():
             state, _ = detect_state(d)
             log(f"  state after launch: {state}")
 
+            if state == "logged_in":
+                log("already logged in, nothing to do", "OK")
+                log("====== checkin success ======", "OK")
+                return
+
         if state == "home":
             if not go_workbench(d):
                 log("failed: workbench", "ERROR")
@@ -623,3 +628,7 @@ def main():
     finally:
         _push_log_to_phone(d)
         _close_log()
+
+
+if __name__ == "__main__":
+    main()

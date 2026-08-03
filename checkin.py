@@ -128,13 +128,12 @@ def detect_state(d):
     States:
       not_in_app      - wrong package, need to launch
       home            - app home with bottom tabs, not on workbench
-      workbench       - 工作台 tab selected, 考勤打卡 visible
-      attendance      - 考勤打卡 page with 签到 button (not logged in)
-      login_phone     - login page, 获取验证码 visible (need phone + code req)
+      workbench       - workbench tab selected, attendance visible
+      attendance      - attendance page with checkin button
+      login_phone     - login page, get-code button visible
       code_countdown  - login page, countdown active (code already sent)
-      code_input      - login page, EditText waiting for code
-      logged_in       - already logged in, showing 打卡记录 / 签退
-      unknown         - can't determine
+      code_input      - login page, get-code gone (code sent, waiting input)
+      unknown         - cannot determine
     """
     pkg = d.app_current().get("package", "")
     texts, _ = dump_texts(d)
@@ -143,20 +142,21 @@ def detect_state(d):
     if pkg != APP_PACKAGE:
         return "not_in_app", texts
 
-    # attendance page with 签到 button (not yet logged in)
+    # attendance page with 签到 button
     if T["checkin"] in all_text:
         return "attendance", texts
 
-    # login page: code already requested (countdown visible)
+    # login page: countdown active (code already sent)
     if T["smsLogin"] in all_text and re.search(r"\d{1,2}\s*s", all_text):
         return "code_countdown", texts
 
-    # login page: 获取验证码 visible (need to input phone + request code)
-    if T["getCode"] in all_text or T["smsLogin"] in all_text:
-        # check if EditText is present (code input phase)
-        if d(className="android.widget.EditText").exists(timeout=1):
-            return "code_input", texts
+    # login page: 获取验证码 button visible (need phone + request code)
+    if T["getCode"] in all_text:
         return "login_phone", texts
+
+    # login page: sms login visible but no get-code button (code already sent)
+    if T["smsLogin"] in all_text:
+        return "code_input", texts
 
     # workbench: 考勤打卡 entry visible
     if T["attendance"] in all_text:

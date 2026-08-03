@@ -24,6 +24,8 @@ from checkin import (
     dump_texts,
     APP_PACKAGE,
     T,
+    native_dump_texts,
+    dismiss_location_popup,
 )
 
 
@@ -450,6 +452,52 @@ class TestConfigConsistency(unittest.TestCase):
             self.assertIn(key, T, f"Missing text key: {key}")
             self.assertTrue(T[key], f"Empty text value for: {key}")
 
+
+
+# ------------------------------------------------------------------
+# native_dump_texts and dismiss_location_popup tests
+# ------------------------------------------------------------------
+
+class TestNativeDumpTexts(unittest.TestCase):
+    """native_dump_texts uses adb shell uiautomator dump as fallback."""
+
+    def test_returns_texts_from_xml(self):
+        xml = make_xml([{"text": "hello"}, {"text": "world"}])
+        d = MockDevice(xml=xml)
+        d.shell = lambda cmd: type("R", (), {"output": xml})()
+        texts, raw = native_dump_texts(d)
+        self.assertIn("hello", texts)
+        self.assertIn("world", texts)
+
+    def test_returns_empty_on_failure(self):
+        d = MockDevice()
+        d.shell = lambda cmd: (_ for _ in ()).throw(Exception("fail"))
+        texts, raw = native_dump_texts(d)
+        self.assertEqual(texts, [])
+        self.assertEqual(raw, "")
+
+
+class TestDismissLocationPopup(unittest.TestCase):
+    """dismiss_location_popup detects and clicks confirm on location error popup."""
+
+    def test_no_popup_returns_false(self):
+        xml = make_xml([{"text": T["checkin"]}])
+        d = MockDevice(xml=xml)
+        d.shell = lambda cmd: type("R", (), {"output": xml})()
+        result = dismiss_location_popup(d)
+        self.assertFalse(result)
+
+    def test_popup_detected_and_confirm_clicked(self):
+        xml = make_xml([
+            {"text": T["locationError"]},
+            {"text": T["confirm"], "bounds": "[162,1458][918,1614]"},
+        ])
+        d = MockDevice(xml=xml)
+        d.shell = lambda cmd: type("R", (), {"output": xml})()
+        result = dismiss_location_popup(d)
+        self.assertTrue(result)
+        self.assertEqual(len(d.clicked), 1)
+        self.assertEqual(d.clicked[0], (540, 1536))
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -23,7 +23,9 @@ var config = {
         pushplus: "pushplus",
         viewDetail: "查看详情",
         trustedAuth: "可信认证",
-        cancel: "取消"
+        cancel: "取消",
+        locationError: "位置信息获取失败",
+        confirm: "确认"
     },
 
     timeout: {

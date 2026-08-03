@@ -13,6 +13,7 @@ import uiautomator2 as u2
 import time
 import re
 import os
+import subprocess
 import xml.etree.ElementTree as ET
 
 # ------------------------------------------------------------------
@@ -46,7 +47,9 @@ T = {
     "viewDetail": "查看详情",
     "trustedAuth": "可信认证",
     "cancel": "取消",
-    }
+    "locationError": "位置信息获取失败",
+    "confirm": "确认",
+}
 
 TO = {
     "findElement": 10,
@@ -113,6 +116,65 @@ def dump_texts(d):
         if c and c.strip():
             texts.append(c.strip())
     return texts, xml
+
+def native_dump_texts(d):
+    """Dump accessibility tree via adb shell uiautomator dump.
+
+    u2 dump_hierarchy() sometimes misses webview-internal nodes
+    (e.g. location-error popups inside the attendance webview).
+    The native uiautomator dump is more reliable for those cases.
+    Returns (list_of_texts, raw_xml).
+    """
+    try:
+        d.shell("uiautomator dump /sdcard/ui_native.xml")
+        raw = d.shell("cat /sdcard/ui_native.xml").output
+        root = ET.fromstring(raw)
+        texts = []
+        for node in root.iter():
+            t = node.get("text", "")
+            c = node.get("content-desc", "")
+            if t and t.strip():
+                texts.append(t.strip())
+            if c and c.strip():
+                texts.append(c.strip())
+        return texts, raw
+    except Exception as e:
+        log(f"  native_dump_texts failed: {e}", "WARN")
+        return [], ""
+
+
+def dismiss_location_popup(d):
+    """Detect and dismiss the ???????? popup that sometimes
+    appears over the attendance webview.  u2 dump misses it, so
+    we use the native uiautomator dump to check.
+    """
+    texts, xml = native_dump_texts(d)
+    all_text = " ".join(texts)
+    if T["locationError"] not in all_text and T["confirm"] not in all_text:
+        return False  # no popup
+
+    loc_err = T["locationError"]; conf = T["confirm"]; log(f"  {loc_err} popup detected, clicking {conf}", "WARN")
+    # Find confirm button bounds from native XML and click center
+    root = ET.fromstring(xml)
+    for node in root.iter():
+        t = node.get("text", "")
+        if t and T["confirm"] in t:
+            bounds = node.get("bounds", "")
+            m = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
+            if m:
+                cx = (int(m.group(1)) + int(m.group(3))) // 2
+                cy = (int(m.group(2)) + int(m.group(4))) // 2
+                d.click(cx, cy)
+                log(f"  click {conf} at ({cx},{cy})")
+                time.sleep(2)
+                return True
+    # fallback: click by coordinate from native dump
+    if click_xml_bounds(d, xml, T["confirm"]):
+        log(f"  click {conf} via XML bounds")
+        time.sleep(2)
+        return True
+    log(f"  {conf} button not found in popup XML", "ERROR")
+    return False
 
 
 def print_screen(d, label="screen"):
@@ -247,6 +309,7 @@ def open_attendance(d):
 
 def do_checkin(d):
     log("STEP 3: 签到/签退 (webview, retry up to 6)")
+    dismiss_location_popup(d)
     for i in range(6):
         texts, _ = dump_texts(d)
         all_text = " ".join(texts)
@@ -261,6 +324,7 @@ def do_checkin(d):
                     log(f"  click {label} at ({cx},{cy}) attempt {i+1}")
                     time.sleep(TO["pageLoad"])
                     return True
+        dismiss_location_popup(d)
         log(f"  not found, retry {i+1}/6")
         time.sleep(3)
     return False

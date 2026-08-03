@@ -548,8 +548,13 @@ def main():
 
         if state == "not_in_app" or state == "unknown":
             launch_app(d)
-            state, _ = detect_state(d)
-            log(f"  state after launch: {state}")
+            # wait for app to load, poll state up to 5 times
+            for _ in range(5):
+                time.sleep(3)
+                state, _ = detect_state(d)
+                log(f"  state after launch: {state}")
+                if state != "unknown":
+                    break
 
         if state == "home":
             if not go_workbench(d):
@@ -571,6 +576,13 @@ def main():
                 shot(d, "fail_checkin")
                 return
             state, _ = detect_state(d)
+
+        # guard: must be on a login page to continue
+        if state not in ("login_phone", "code_countdown", "code_input"):
+            log(f"unexpected state: {state}, cannot continue", "ERROR")
+            shot(d, "fail_unexpected_state")
+            print_screen(d, "fail_unexpected_state")
+            return
 
         # --- login phase: sequential, no state jumping ---
         if state == "login_phone":

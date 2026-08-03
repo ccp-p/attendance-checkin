@@ -104,7 +104,16 @@ def shot(d, name):
 
 
 def dump_texts(d):
-    """Return (list_of_texts, raw_xml) from the accessibility tree."""
+    """Return (list_of_texts, raw_xml) from the accessibility tree.
+
+    Primary: adb shell uiautomator dump (more reliable, captures webview
+    internal nodes that u2 dump_hierarchy misses).
+    Fallback: u2 dump_hierarchy() if native dump fails.
+    """
+    texts, xml = native_dump_texts(d)
+    if texts:
+        return texts, xml
+    # fallback: u2 dump
     xml = d.dump_hierarchy()
     root = ET.fromstring(xml)
     texts = []
@@ -233,22 +242,29 @@ def detect_state(d):
 
 
 def click_any(d, label, timeout=10):
-    """Click by exact text, then contains-text. Returns True on success."""
+    """Click by text. Primary: native dump XML bounds; fallback: u2 selector."""
+    # strategy 1: native dump XML bounds (primary)
+    texts, xml = dump_texts(d)
+    if label in " ".join(texts):
+        if click_xml_bounds(d, xml, label):
+            return True
+    # strategy 2: u2 text selector (fallback, with wait)
     el = d(text=label)
     if el.exists(timeout=timeout):
         info = el.info
         b = info["bounds"]
         cx, cy = (b["left"] + b["right"]) // 2, (b["top"] + b["bottom"]) // 2
         d.click(cx, cy)
-        log(f"  click [{label}] at ({cx},{cy})")
+        log(f"  click(u2) [{label}] at ({cx},{cy})")
         return True
+    # strategy 3: u2 textContains (fallback)
     el = d(textContains=label)
     if el.exists(timeout=5):
         info = el.info
         b = info["bounds"]
         cx, cy = (b["left"] + b["right"]) // 2, (b["top"] + b["bottom"]) // 2
         d.click(cx, cy)
-        log(f"  click(contains) [{label}] at ({cx},{cy})")
+        log(f"  click(u2,contains) [{label}] at ({cx},{cy})")
         return True
     log(f"  not found: {label}", "WARN")
     return False
@@ -311,17 +327,12 @@ def do_checkin(d):
     log("STEP 3: 签到/签退 (webview, retry up to 6)")
     dismiss_location_popup(d)
     for i in range(6):
-        texts, _ = dump_texts(d)
+        texts, xml = dump_texts(d)
         all_text = " ".join(texts)
         for label in (T["checkin"], T["checkout"]):
             if label in all_text:
-                el = d(text=label)
-                if el.exists(timeout=2):
-                    info = el.info
-                    b = info["bounds"]
-                    cx, cy = (b["left"] + b["right"]) // 2, (b["top"] + b["bottom"]) // 2
-                    d.click(cx, cy)
-                    log(f"  click {label} at ({cx},{cy}) attempt {i+1}")
+                if click_xml_bounds(d, xml, label):
+                    log(f"  click {label} attempt {i+1}")
                     time.sleep(TO["pageLoad"])
                     return True
         dismiss_location_popup(d)
@@ -586,7 +597,7 @@ def handle_trusted_auth(d):
     The popup appears randomly after submitting the SMS login.  It is a
     webview so text may be slow to appear in the accessibility tree.
     We poll for up to ~20 s.  When found we click 取消 via u2 selector,
-    falling back to raw-XML bounds parsing.
+    falling back to u2 selector if XML bounds fails.
     """
     log("STEP 10: check 可信认证 (trusted authentication)...")
 
@@ -598,31 +609,31 @@ def handle_trusted_auth(d):
             log(f"  可信认证 detected! (poll {i+1})", "WARN")
             shot(d, f"trusted_auth_{i}")
 
-            # strategy 1: u2 text selector
+            # strategy 1: native dump XML bounds (primary)
+            if click_xml_bounds(d, xml, T["cancel"]):
+                log("  click ?? via XML", "OK")
+                time.sleep(TO["pageLoad"])
+                return True
+
+            # strategy 2: u2 text selector (fallback)
             el = d(text=T["cancel"])
             if el.exists(timeout=5):
                 info = el.info
                 b = info["bounds"]
                 cx, cy = (b["left"] + b["right"]) // 2, (b["top"] + b["bottom"]) // 2
                 d.click(cx, cy)
-                log(f"  click 取消 at ({cx},{cy})", "OK")
+                log(f"  click(u2) ?? at ({cx},{cy})", "OK")
                 time.sleep(TO["pageLoad"])
                 return True
 
-            # strategy 2: u2 textContains selector
+            # strategy 3: u2 textContains (fallback)
             el = d(textContains=T["cancel"])
             if el.exists(timeout=5):
                 info = el.info
                 b = info["bounds"]
                 cx, cy = (b["left"] + b["right"]) // 2, (b["top"] + b["bottom"]) // 2
                 d.click(cx, cy)
-                log(f"  click(contains) 取消 at ({cx},{cy})", "OK")
-                time.sleep(TO["pageLoad"])
-                return True
-
-            # strategy 3: raw XML bounds
-            if click_xml_bounds(d, xml, T["cancel"]):
-                log("  click 取消 via XML", "OK")
+                log(f"  click(u2,contains) ?? at ({cx},{cy})", "OK")
                 time.sleep(TO["pageLoad"])
                 return True
 

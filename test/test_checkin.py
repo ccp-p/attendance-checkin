@@ -51,6 +51,10 @@ class MockDevice:
         self.clicked.append((x, y))
         return True
 
+    def shell(self, cmd):
+        """Mock shell: return mock XML for uiautomator dump commands."""
+        return type("R", (), {"output": self._xml})()
+
 
 def make_xml(nodes):
     """Build accessibility XML from a list of node specs.

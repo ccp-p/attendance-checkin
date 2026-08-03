@@ -52,9 +52,19 @@ class MockDevice:
         return True
 
     def shell(self, cmd):
-        """Mock shell: return mock XML for uiautomator dump commands."""
-        return type("R", (), {"output": self._xml})()
-
+        """Mock shell: return padded XML to pass min_nodes check."""
+        from xml.etree import ElementTree as ET2
+        base = self._xml
+        try:
+            root = ET2.fromstring(base)
+            count = sum(1 for _ in root.iter())
+            if count < 20:
+                for _ in range(20 - count):
+                    ET2.SubElement(root, "node")
+                base = ET2.tostring(root, encoding="unicode")
+        except Exception:
+            pass
+        return type("R", (), {"output": base})()
 
 def make_xml(nodes):
     """Build accessibility XML from a list of node specs.
@@ -468,7 +478,7 @@ class TestNativeDumpTexts(unittest.TestCase):
     def test_returns_texts_from_xml(self):
         xml = make_xml([{"text": "hello"}, {"text": "world"}])
         d = MockDevice(xml=xml)
-        d.shell = lambda cmd: type("R", (), {"output": xml})()
+        # MockDevice.shell already pads XML with enough nodes
         texts, raw = native_dump_texts(d)
         self.assertIn("hello", texts)
         self.assertIn("world", texts)

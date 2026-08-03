@@ -126,30 +126,41 @@ def dump_texts(d):
             texts.append(c.strip())
     return texts, xml
 
-def native_dump_texts(d):
+def native_dump_texts(d, min_nodes=15, retries=2):
     """Dump accessibility tree via adb shell uiautomator dump.
 
     u2 dump_hierarchy() sometimes misses webview-internal nodes
     (e.g. location-error popups inside the attendance webview).
     The native uiautomator dump is more reliable for those cases.
+
+    During page transitions the dump can return an incomplete tree
+    (very few nodes). We retry up to `retries` times if the node count
+    is below `min_nodes` to avoid acting on stale/partial data.
     Returns (list_of_texts, raw_xml).
     """
-    try:
-        d.shell("uiautomator dump /sdcard/ui_native.xml")
-        raw = d.shell("cat /sdcard/ui_native.xml").output
-        root = ET.fromstring(raw)
-        texts = []
-        for node in root.iter():
-            t = node.get("text", "")
-            c = node.get("content-desc", "")
-            if t and t.strip():
-                texts.append(t.strip())
-            if c and c.strip():
-                texts.append(c.strip())
-        return texts, raw
-    except Exception as e:
-        log(f"  native_dump_texts failed: {e}", "WARN")
-        return [], ""
+    for attempt in range(retries):
+        try:
+            d.shell("uiautomator dump /sdcard/ui_native.xml")
+            raw = d.shell("cat /sdcard/ui_native.xml").output
+            root = ET.fromstring(raw)
+            node_count = sum(1 for _ in root.iter())
+            texts = []
+            for node in root.iter():
+                t = node.get("text", "")
+                c = node.get("content-desc", "")
+                if t and t.strip():
+                    texts.append(t.strip())
+                if c and c.strip():
+                    texts.append(c.strip())
+            if node_count >= min_nodes or attempt == retries - 1:
+                if node_count < min_nodes:
+                    log(f"  native_dump returned {node_count} nodes (expected >={min_nodes})", "WARN")
+                return texts, raw
+            time.sleep(0.5)
+        except Exception as e:
+            log(f"  native_dump_texts attempt {attempt+1} failed: {e}", "WARN")
+            time.sleep(0.5)
+    return [], ""
 
 
 def dismiss_location_popup(d):

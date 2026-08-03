@@ -143,10 +143,6 @@ def detect_state(d):
     if pkg != APP_PACKAGE:
         return "not_in_app", texts
 
-    # already logged in: shows 签退 or 打卡记录
-    if "签退" in all_text or ("上班" in all_text and "打卡时间" in all_text):
-        return "logged_in", texts
-
     # attendance page with 签到 button (not yet logged in)
     if T["checkin"] in all_text:
         return "attendance", texts
@@ -550,18 +546,10 @@ def main():
         if texts:
             log(f"  screen texts: {texts[:15]}")
 
-        if state == "logged_in":
-            log("already logged in, need logout to test trusted-auth", "WARN")
-            return
-
         if state == "not_in_app" or state == "unknown":
             launch_app(d)
             state, _ = detect_state(d)
             log(f"  state after launch: {state}")
-
-            if state == "logged_in":
-                log("already logged in, need logout to test trusted-auth", "WARN")
-                return
 
         if state == "home":
             if not go_workbench(d):
@@ -584,35 +572,33 @@ def main():
                 return
             state, _ = detect_state(d)
 
-        # after clicking 签到, should be on login page
-        if state in ("login_phone", "code_input", "code_countdown", "unknown"):
-            if state == "login_phone":
-                input_phone(d)
-                click_sms_login(d)
-                if not request_code(d):
-                    log("failed: request code", "ERROR")
-                    shot(d, "fail_request_code")
-                    return
-                state = "code_countdown"
+        # --- login phase: sequential, no state jumping ---
+        if state == "login_phone":
+            input_phone(d)
+            click_sms_login(d)
+            if not request_code(d):
+                log("failed: request code", "ERROR")
+                shot(d, "fail_request_code")
+                return
 
-            if state == "code_countdown":
-                code = retrieve_code(d)
-                if not code:
-                    log("failed: no verification code", "ERROR")
-                    shot(d, "fail_no_code")
-                    return
-                input_code(d, code)
+        # retrieve code -> input -> submit -> trusted-auth -> check
+        code = retrieve_code(d)
+        if not code:
+            log("failed: no verification code", "ERROR")
+            shot(d, "fail_no_code")
+            return
 
-            submit_login(d)
+        input_code(d, code)
+        submit_login(d)
 
-            # handle 可信认证 if it appears
-            handle_trusted_auth(d)
+        # handle 可信认证 if it appears
+        handle_trusted_auth(d)
 
-            ok = check_result(d)
-            if ok:
-                log("====== checkin success ======", "OK")
-            else:
-                log("====== checkin uncertain ======", "WARN")
+        ok = check_result(d)
+        if ok:
+            log("====== checkin success ======", "OK")
+        else:
+            log("====== checkin uncertain ======", "WARN")
 
     except Exception as e:
         log(f"exception: {e}", "ERROR")

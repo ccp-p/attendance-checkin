@@ -189,6 +189,20 @@ class TestDetectState(unittest.TestCase):
         state, _ = detect_state(d)
         self.assertEqual(state, "attendance")
 
+    def test_attendance_page_checkout_only(self):
+        """?? button without ?? should also be attendance state."""
+        xml = make_xml([{"text": T["checkout"]}, {"text": T["attendance"]}])
+        d = MockDevice(xml=xml)
+        state, _ = detect_state(d)
+        self.assertEqual(state, "attendance")
+
+    def test_attendance_with_both_buttons(self):
+        """Both ?? and ?? present should be attendance."""
+        xml = make_xml([{"text": T["checkin"]}, {"text": T["checkout"]}])
+        d = MockDevice(xml=xml)
+        state, _ = detect_state(d)
+        self.assertEqual(state, "attendance")
+
     def test_login_phone_with_getcode(self):
         xml = make_xml([{"text": T["getCode"]}, {"text": T["smsLogin"]}])
         d = MockDevice(xml=xml)
@@ -414,7 +428,7 @@ class TestConfigConsistency(unittest.TestCase):
 
     def test_text_keys_complete(self):
         expected_keys = [
-            "tabWorkbench", "attendance", "checkin", "smsLogin",
+            "tabWorkbench", "attendance", "checkin", "checkout",
             "getCode", "codeExpired", "pushplus", "viewDetail",
             "trustedAuth", "cancel",
         ]

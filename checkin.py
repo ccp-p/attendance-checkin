@@ -38,6 +38,7 @@ T = {
     "tabWorkbench": "工作台",
     "attendance": "考勤打卡",
     "checkin": "签到",
+    "checkout": "签退",
     "smsLogin": "短信验证码登录",
     "getCode": "获取验证码",
     "codeExpired": "短信验证码过期或不存在",
@@ -45,7 +46,7 @@ T = {
     "viewDetail": "查看详情",
     "trustedAuth": "可信认证",
     "cancel": "取消",
-}
+    }
 
 TO = {
     "findElement": 10,
@@ -141,8 +142,8 @@ def detect_state(d):
     if pkg != APP_PACKAGE:
         return "not_in_app", texts
 
-    # attendance page with 签到 button
-    if T["checkin"] in all_text:
+    # attendance page with 签到 or 签退 button
+    if T["checkin"] in all_text or T["checkout"] in all_text:
         return "attendance", texts
 
     # login page: 获取验证码 button visible (need phone + request code)
@@ -245,17 +246,21 @@ def open_attendance(d):
 
 
 def do_checkin(d):
-    log("STEP 3: 签到 (webview, retry up to 6)")
+    log("STEP 3: 签到/签退 (webview, retry up to 6)")
     for i in range(6):
-        el = d(text=T["checkin"])
-        if el.exists(timeout=10):
-            info = el.info
-            b = info["bounds"]
-            cx, cy = (b["left"] + b["right"]) // 2, (b["top"] + b["bottom"]) // 2
-            d.click(cx, cy)
-            log(f"  click 签到 at ({cx},{cy}) attempt {i+1}")
-            time.sleep(TO["pageLoad"])
-            return True
+        texts, _ = dump_texts(d)
+        all_text = " ".join(texts)
+        for label in (T["checkin"], T["checkout"]):
+            if label in all_text:
+                el = d(text=label)
+                if el.exists(timeout=2):
+                    info = el.info
+                    b = info["bounds"]
+                    cx, cy = (b["left"] + b["right"]) // 2, (b["top"] + b["bottom"]) // 2
+                    d.click(cx, cy)
+                    log(f"  click {label} at ({cx},{cy}) attempt {i+1}")
+                    time.sleep(TO["pageLoad"])
+                    return True
         log(f"  not found, retry {i+1}/6")
         time.sleep(3)
     return False
@@ -288,6 +293,23 @@ def wait_for_text(d, text, timeout=15, label=""):
         if text in " ".join(texts):
             log(f"  [{label}] found")
             return True
+        time.sleep(1)
+    log(f"  [{label}] not found within {timeout}s", "WARN")
+    return False
+
+
+def wait_for_any(d, texts_to_find, timeout=15, label=""):
+    """Poll for any of the given texts to appear in the accessibility tree."""
+    label = label or "/".join(texts_to_find)
+    log(f"  waiting for [{label}] to appear...")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        texts, _ = dump_texts(d)
+        all_text = " ".join(texts)
+        for t in texts_to_find:
+            if t in all_text:
+                log(f"  [{label}] found ({t})")
+                return True
         time.sleep(1)
     log(f"  [{label}] not found within {timeout}s", "WARN")
     return False
@@ -613,8 +635,8 @@ def main():
                 log("failed: attendance", "ERROR")
                 shot(d, "fail_attendance")
                 return
-            # attendance page is a webview — wait for 签到 button to appear
-            wait_for_text(d, T["checkin"], timeout=15, label="签到按钮")
+            # attendance page is a webview — wait for 签到 or 签退 button to appear
+            wait_for_any(d, [T["checkin"], T["checkout"]], timeout=15, label="签到/签退按钮")
             state, _ = detect_state(d)
 
         if state == "attendance":

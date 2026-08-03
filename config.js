@@ -16,6 +16,7 @@ var config = {
         tabWorkbench: "工作台",
         attendance: "考勤打卡",
         checkin: "签到",
+        checkout: "签退",
         smsLogin: "短信验证码登录",
         getCode: "获取验证码",
         codeExpired: "短信验证码过期或不存在",

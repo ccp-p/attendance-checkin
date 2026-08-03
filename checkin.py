@@ -142,10 +142,6 @@ def detect_state(d):
     if pkg != APP_PACKAGE:
         return "not_in_app", texts
 
-    # attendance page with 签到 or 签退 button
-    if T["checkin"] in all_text or T["checkout"] in all_text:
-        return "attendance", texts
-
     # login page: 获取验证码 button visible (need phone + request code)
     if T["getCode"] in all_text:
         return "login_phone", texts
@@ -158,6 +154,10 @@ def detect_state(d):
     # (getCode appears only AFTER clicking 短信验证码登录 to switch to SMS mode)
     if T["smsLogin"] in all_text:
         return "login_phone", texts
+
+    # attendance page with 签到 or 签退 button
+    if T["checkin"] in all_text or T["checkout"] in all_text:
+        return "attendance", texts
 
     # workbench: 考勤打卡 entry visible
     if T["attendance"] in all_text:

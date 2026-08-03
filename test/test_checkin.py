@@ -203,6 +203,20 @@ class TestDetectState(unittest.TestCase):
         state, _ = detect_state(d)
         self.assertEqual(state, "attendance")
 
+    def test_login_over_attendance(self):
+        """Login webview over attendance page: login elements take priority."""
+        xml = make_xml([{"text": T["checkout"]}, {"text": T["smsLogin"]}, {"text": T["getCode"]}])
+        d = MockDevice(xml=xml)
+        state, _ = detect_state(d)
+        self.assertEqual(state, "login_phone")
+
+    def test_login_over_attendance_countdown(self):
+        """Login countdown over attendance: code_countdown takes priority."""
+        xml = make_xml([{"text": T["checkout"]}, {"text": T["smsLogin"]}, {"text": "59s"}])
+        d = MockDevice(xml=xml)
+        state, _ = detect_state(d)
+        self.assertEqual(state, "code_countdown")
+
     def test_login_phone_with_getcode(self):
         xml = make_xml([{"text": T["getCode"]}, {"text": T["smsLogin"]}])
         d = MockDevice(xml=xml)

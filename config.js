@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 //  attendance checkin config (calibrated on real device)
 //  device: OPPO PJZ110  1080x2376
 //  app package: com.cmri.ercs.yqx
@@ -20,7 +20,9 @@ var config = {
         getCode: "获取验证码",
         codeExpired: "短信验证码过期或不存在",
         pushplus: "pushplus",
-        viewDetail: "查看详情"
+        viewDetail: "查看详情",
+        trustedAuth: "可信认证",
+        cancel: "取消"
     },
 
     timeout: {

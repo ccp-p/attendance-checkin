@@ -233,8 +233,22 @@ def click_sms_login(d):
 
 def request_code(d):
     log("STEP 6: 获取验证码")
-    click_any(d, T["getCode"])
-    time.sleep(2)
+    if not click_any(d, T["getCode"]):
+        log("  获取验证码按钮未找到,可能已是登录态", "ERROR")
+        return False
+    # 点击后按钮应变为倒数(如 59s / 60s后重发),轮询确认
+    for i in range(10):
+        time.sleep(1)
+        texts, _ = dump_texts(d)
+        for t in texts:
+            if re.search(r"\d{1,2}\s*s", t) or "重新获取" in t or "重发" in t:
+                log(f"  获取验证码成功,按钮已变倒数: {t}", "OK")
+                return True
+        log(f"  等待按钮变倒数... (attempt {i+1})")
+    # 最后兜底:dump 一次全部文字看看
+    print_screen(d, "request_code_timeout")
+    log("  获取验证码后未检测到倒数,可能未触发发送", "ERROR")
+    return False
 
 
 # --- verification code retrieval (pushplus via WeChat) ---
@@ -497,7 +511,10 @@ def main():
 
         input_phone(d)
         click_sms_login(d)
-        request_code(d)
+        if not request_code(d):
+            log("failed: request code", "ERROR")
+            shot(d, "fail_request_code")
+            return
 
         code = retrieve_code(d)
         if not code:

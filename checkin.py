@@ -129,19 +129,20 @@ def native_dump_texts(d, min_nodes=15, retries=2):
     Returns (list_of_texts, raw_xml).
     """
     tmp_file = f"/sdcard/ui_native_{int(time.time() * 1000)}.xml"
+    adb = os.path.join(_ADB_DIR, "adb.exe")
     for attempt in range(retries):
         try:
-            # Use subprocess directly (d.shell kills uiautomator)
+            # Use subprocess with full adb path (d.shell kills uiautomator)
             r = subprocess.run(
-                ["adb", "shell", "uiautomator", "dump", tmp_file],
+                [adb, "shell", "uiautomator", "dump", tmp_file],
                 capture_output=True, text=True, timeout=30,
             )
-            if r.returncode != 0 or "ERROR" in r.stdout:
-                log(f"  native_dump attempt {attempt+1}: dump failed", "WARN")
+            if r.returncode != 0 or "ERROR" in r.stdout or "null root" in r.stdout:
+                log(f"  native_dump attempt {attempt+1}: dump rc={r.returncode} out={r.stdout[:60]}", "WARN")
                 time.sleep(0.5)
                 continue
             r2 = subprocess.run(
-                ["adb", "shell", "cat", tmp_file],
+                [adb, "shell", "cat", tmp_file],
                 capture_output=True, timeout=10,
             )
             raw = r2.stdout.decode("utf-8", errors="replace")
@@ -162,7 +163,7 @@ def native_dump_texts(d, min_nodes=15, retries=2):
             if node_count >= min_nodes or attempt == retries - 1:
                 if node_count < min_nodes:
                     log(f"  native_dump returned {node_count} nodes", "WARN")
-                subprocess.run(["adb", "shell", "rm", "-f", tmp_file],
+                subprocess.run([adb, "shell", "rm", "-f", tmp_file],
                                capture_output=True, timeout=5)
                 return texts, raw
             time.sleep(0.5)
@@ -170,7 +171,7 @@ def native_dump_texts(d, min_nodes=15, retries=2):
             log(f"  native_dump_texts attempt {attempt+1} failed: {e}", "WARN")
             time.sleep(0.5)
     try:
-        subprocess.run(["adb", "shell", "rm", "-f", tmp_file],
+        subprocess.run([adb, "shell", "rm", "-f", tmp_file],
                        capture_output=True, timeout=5)
     except Exception:
         pass
@@ -181,6 +182,8 @@ def dismiss_location_popup(d):
     we use the native uiautomator dump to check.
     """
     texts, xml = native_dump_texts(d)
+    if not texts:
+        texts, xml = dump_texts(d)
     all_text = " ".join(texts)
     if T["locationError"] not in all_text and T["confirm"] not in all_text:
         return False  # no popup
@@ -268,7 +271,7 @@ def click_any(d, label, timeout=10):
     """Click by text. Primary: native dump XML bounds; fallback: u2 selector."""
     # strategy 1: native dump XML bounds (primary)
     texts, xml = native_dump_texts(d)
-    if label in " ".join(texts):
+    if texts and label in " ".join(texts):
         if click_xml_bounds(d, xml, label):
             return True
     # strategy 2: u2 text selector (fallback, with wait)
@@ -351,10 +354,12 @@ def do_checkin(d):
     dismiss_location_popup(d)
     for i in range(6):
         texts, xml = native_dump_texts(d)
+        if not texts:
+            texts, xml = dump_texts(d)
         all_text = " ".join(texts)
         for label in (T["checkin"], T["checkout"]):
             if label in all_text:
-                if click_xml_bounds(d, xml, label):
+                if click_xml_bounds(d, xml, label) or click_any(d, label, timeout=2):
                     log(f"  click {label} attempt {i+1}")
                     time.sleep(TO["pageLoad"])
                     return True
@@ -626,6 +631,8 @@ def handle_trusted_auth(d):
 
     for i in range(6):
         texts, xml = native_dump_texts(d)
+        if not texts:
+            texts, xml = dump_texts(d)
         all_text = " ".join(texts)
 
         if T["trustedAuth"] in all_text:

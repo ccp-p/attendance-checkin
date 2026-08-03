@@ -13,7 +13,6 @@ import uiautomator2 as u2
 import time
 import re
 import os
-import sys
 import xml.etree.ElementTree as ET
 
 # ------------------------------------------------------------------
@@ -32,6 +31,8 @@ PHONE_INPUT = "2449"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SCREENSHOT_DIR = os.path.join(SCRIPT_DIR, "screenshots")
+LOG_FILE = os.path.join(SCRIPT_DIR, "checkin.log")
+PHONE_LOG_FILE = "/sdcard/attendance_checkin/checkin.log"
 
 T = {
     "tabWorkbench": "工作台",
@@ -58,8 +59,36 @@ TO = {
 # ------------------------------------------------------------------
 # helpers
 # ------------------------------------------------------------------
+_log_fh = None
+
+
+def _init_log():
+    global _log_fh
+    _log_fh = open(LOG_FILE, "a", encoding="utf-8")
+
+
 def log(msg, level="INFO"):
-    print(f"[{time.strftime('%H:%M:%S')}] [{level}] {msg}", flush=True)
+    line = f"[{time.strftime('%H:%M:%S')}] [{level}] {msg}"
+    print(line, flush=True)
+    if _log_fh:
+        _log_fh.write(line + "\n")
+        _log_fh.flush()
+
+
+def _push_log_to_phone(d):
+    try:
+        d.shell("mkdir -p /sdcard/attendance_checkin")
+        import subprocess
+        subprocess.run(["adb", "push", LOG_FILE, PHONE_LOG_FILE],
+                       capture_output=True, timeout=10)
+        log("  log pushed to phone")
+    except Exception as e:
+        log(f"  push log to phone failed: {e}", "WARN")
+
+
+def _close_log():
+    if _log_fh:
+        _log_fh.close()
 
 
 def shot(d, name):
@@ -440,6 +469,7 @@ def check_result(d):
 # ------------------------------------------------------------------
 def main():
     os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+    _init_log()
     log("====== attendance checkin started ======")
 
     d = u2.connect()
@@ -496,6 +526,9 @@ def main():
             print_screen(d, "exception")
         except Exception:
             pass
+    finally:
+        _push_log_to_phone(d)
+        _close_log()
 
 
 if __name__ == "__main__":

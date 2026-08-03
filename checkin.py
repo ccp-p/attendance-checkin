@@ -551,8 +551,7 @@ def main():
             log(f"  screen texts: {texts[:15]}")
 
         if state == "logged_in":
-            log("already logged in, nothing to do", "OK")
-            log("====== checkin success ======", "OK")
+            log("already logged in, need logout to test trusted-auth", "WARN")
             return
 
         if state == "not_in_app" or state == "unknown":
@@ -561,8 +560,7 @@ def main():
             log(f"  state after launch: {state}")
 
             if state == "logged_in":
-                log("already logged in, nothing to do", "OK")
-                log("====== checkin success ======", "OK")
+                log("already logged in, need logout to test trusted-auth", "WARN")
                 return
 
         if state == "home":

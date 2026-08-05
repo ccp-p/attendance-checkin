@@ -30,20 +30,20 @@ T_CONFIRM="确认"
 T_CODE_EXPIRED="短信验证码过期或不存在"
 WECHAT_PKG="com.tencent.mm"
 
-TO_FIND=10
-TO_PAGE=3
-TO_LAUNCH=5
-TO_LOGIN=20
-TO_CODE=150
-TO_PUSHPLUS_DELAY=12
-TO_WX_LOAD=4
+TO_FIND=5
+TO_PAGE=2
+TO_LAUNCH=3
+TO_LOGIN=12
+TO_CODE=120
+TO_PUSHPLUS_DELAY=8
+TO_WX_LOAD=2
 
 # UI coordinates calibrated on device (1080x2376)
 COORD_CANCEL="520 1830"       # 可信认证 取消 button
 COORD_TRUST_BACK="86 203"     # back button after dismissing trusted-auth popup
 
 # pushplus polling interval (seconds between API calls)
-TO_PP_POLL=8
+TO_PP_POLL=5
 
 # Temporary files for pushplus API
 PP_KEY_BODY="/sdcard/pp_key.json"
@@ -159,7 +159,7 @@ click_xy() { input tap "$1" "$2"; invalidate_dump; log "  tap ($1,$2)"; }
 
 dismiss_loc() {
     if text_exists "$T_LOC_ERROR"; then
-        log "  loc popup"; click_text "$T_CONFIRM"; sleep 2; return 0
+        log "  loc popup"; click_text "$T_CONFIRM"; sleep 1; return 0
     fi
     return 1
 }
@@ -302,7 +302,7 @@ handle_trusted() {
     for i in 1 2 3 4 5 6; do
         if text_exists "$T_TRUSTED_AUTH" || text_exists "$T_TRUSTED_AUTH_PLATFORM"; then
             log "  trusted auth!"; shot "trusted"
-            input tap $COORD_CANCEL; sleep 2
+            input tap $COORD_CANCEL; sleep 1
            shot "trusted_after_cancel"; sleep "$TO_PAGE"
            # click back button at top-left to dismiss residual page
            input tap $COORD_TRUST_BACK; sleep "$TO_PAGE"
@@ -310,7 +310,7 @@ handle_trusted() {
            shot "trusted_after_back"; return 0
         fi
         invalidate_dump
-        sleep 3
+        sleep 2
     done
     log "  no trusted auth"; return 1
 }
@@ -318,7 +318,7 @@ handle_trusted() {
 check_trusted() {
     if text_exists "$T_TRUSTED_AUTH" || text_exists "$T_TRUSTED_AUTH_PLATFORM"; then
         log "  trusted auth popup!"; shot "trusted_popup"
-       input tap $COORD_CANCEL; sleep 2
+       input tap $COORD_CANCEL; sleep 1
        # click back button at top-left to dismiss residual page
        input tap $COORD_TRUST_BACK; sleep "$TO_PAGE"
        input tap $COORD_TRUST_BACK; sleep "$TO_PAGE"
@@ -392,7 +392,7 @@ main() {
         if click_text "$T_CHECKIN"; then checkin_done=1; break; fi
         if click_text "$T_CHECKOUT"; then checkin_done=1; break; fi
         log "  retry checkin ($ci)"
-        sleep 3
+        sleep 2
     done
     if [ "$checkin_done" -eq 0 ]; then fail "checkin btn"; fi
     sleep "$TO_PAGE"
@@ -432,7 +432,7 @@ main() {
             0) input tap 540 2226 ;;
         esac
         log "  digit $d"
-        sleep 1
+        sleep 0.5
     done
     invalidate_dump
     sleep 1

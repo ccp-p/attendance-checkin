@@ -303,10 +303,11 @@ handle_trusted() {
         if text_exists "$T_TRUSTED_AUTH" || text_exists "$T_TRUSTED_AUTH_PLATFORM"; then
             log "  trusted auth!"; shot "trusted"
             input tap $COORD_CANCEL; sleep 2
-            shot "trusted_after_cancel"; sleep "$TO_PAGE"
-            # click back button at top-left to dismiss residual page
-            input tap $COORD_TRUST_BACK; sleep "$TO_PAGE"
-            shot "trusted_after_back"; return 0
+           shot "trusted_after_cancel"; sleep "$TO_PAGE"
+           # click back button at top-left to dismiss residual page
+           input tap $COORD_TRUST_BACK; sleep "$TO_PAGE"
+           input tap $COORD_TRUST_BACK; sleep "$TO_PAGE"
+           shot "trusted_after_back"; return 0
         fi
         invalidate_dump
         sleep 3
@@ -317,10 +318,11 @@ handle_trusted() {
 check_trusted() {
     if text_exists "$T_TRUSTED_AUTH" || text_exists "$T_TRUSTED_AUTH_PLATFORM"; then
         log "  trusted auth popup!"; shot "trusted_popup"
-        input tap $COORD_CANCEL; sleep 2
-        # click back button at top-left to dismiss residual page
-        input tap $COORD_TRUST_BACK; sleep "$TO_PAGE"
-        shot "trusted_after_back"; return 0
+       input tap $COORD_CANCEL; sleep 2
+       # click back button at top-left to dismiss residual page
+       input tap $COORD_TRUST_BACK; sleep "$TO_PAGE"
+       input tap $COORD_TRUST_BACK; sleep "$TO_PAGE"
+       shot "trusted_after_back"; return 0
     fi
     return 1
 }

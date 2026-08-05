@@ -60,6 +60,12 @@ TO = {
 }
 
 
+# UI coordinates calibrated on device (1080x2376)
+COORD = {
+    "trustedAuthBack": (86, 203),  # back button after dismissing trusted-auth popup
+}
+
+
 # ------------------------------------------------------------------
 # helpers
 # ------------------------------------------------------------------
@@ -637,33 +643,41 @@ def handle_trusted_auth(d):
 
         if T["trustedAuth"] in all_text:
             log(f"  可信认证 detected! (poll {i+1})", "WARN")
-            shot(d, f"trusted_auth_{i}")
+           shot(d, f"trusted_auth_{i}")
+
+            clicked = False
 
             # strategy 1: native dump XML bounds (primary)
             if click_xml_bounds(d, xml, T["cancel"]):
-                log("  click ?? via XML", "OK")
-                time.sleep(TO["pageLoad"])
-                return True
+                log("  click 取消 via XML", "OK")
+                clicked = True
 
             # strategy 2: u2 text selector (fallback)
-            el = d(text=T["cancel"])
-            if el.exists(timeout=5):
+            elif d(text=T["cancel"]).exists(timeout=5):
+                el = d(text=T["cancel"])
                 info = el.info
                 b = info["bounds"]
                 cx, cy = (b["left"] + b["right"]) // 2, (b["top"] + b["bottom"]) // 2
                 d.click(cx, cy)
-                log(f"  click(u2) ?? at ({cx},{cy})", "OK")
-                time.sleep(TO["pageLoad"])
-                return True
+                log(f"  click(u2) 取消 at ({cx},{cy})", "OK")
+                clicked = True
 
             # strategy 3: u2 textContains (fallback)
-            el = d(textContains=T["cancel"])
-            if el.exists(timeout=5):
+            elif d(textContains=T["cancel"]).exists(timeout=5):
+                el = d(textContains=T["cancel"])
                 info = el.info
                 b = info["bounds"]
                 cx, cy = (b["left"] + b["right"]) // 2, (b["top"] + b["bottom"]) // 2
                 d.click(cx, cy)
-                log(f"  click(u2,contains) ?? at ({cx},{cy})", "OK")
+                log(f"  click(u2,contains) 取消 at ({cx},{cy})", "OK")
+                clicked = True
+
+            if clicked:
+                time.sleep(TO["pageLoad"])
+                # STEP 10b: click back button at top-left to dismiss residual page
+                bx, by = COORD["trustedAuthBack"]
+                d.click(bx, by)
+                log(f"  click back at ({bx},{by})", "OK")
                 time.sleep(TO["pageLoad"])
                 return True
 

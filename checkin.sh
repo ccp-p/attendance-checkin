@@ -30,6 +30,8 @@ T_CONFIRM="确认"
 T_CODE_EXPIRED="短信验证码过期或不存在"
 WECHAT_PKG="com.tencent.mm"
 
+T_CONFIRM_CHECKIN="确认打卡"
+
 TO_FIND=5
 TO_PAGE=2
 TO_LAUNCH=3
@@ -401,6 +403,14 @@ main() {
     if [ "$checkin_done" -eq 0 ]; then fail "checkin btn"; fi
     sleep "$TO_PAGE"
     invalidate_dump
+
+    # Handle early-leave confirmation popup ("你早退了" / "确认打卡")
+    if text_exists "$T_CONFIRM_CHECKIN"; then
+        log "  early-leave popup detected, clicking 确认打卡"
+        click_text "$T_CONFIRM_CHECKIN"
+        sleep "$TO_PAGE"
+        invalidate_dump
+    fi
 
     log "STEP 3: wait login"
     if ! wait_for_any "$T_GET_CODE" "$T_SMS_LOGIN" "$TO_LOGIN"; then fail "login page"; fi

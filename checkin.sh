@@ -366,7 +366,13 @@ goto_attendance() {
 
 main() {
     log "====== checkin started ======"
-    log "STEP 0: launch"
+    log "STEP 0: wake screen & launch"
+    # Wake up screen (cron runs while screen is off)
+    input keyevent 224; sleep 1
+    # Swipe up to dismiss lock screen (no PIN needed)
+    input swipe 540 1800 540 600 300; sleep 1
+    # Force-stop app to guarantee fresh initial state
+    am force-stop "$APP_PACKAGE"; sleep 1
     input keyevent KEYCODE_HOME; sleep 1
     invalidate_dump
     monkey -p "$APP_PACKAGE" -c android.intent.category.LAUNCHER 1 2>/dev/null

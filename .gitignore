@@ -1,7 +1,9 @@
 *.png
 *.xml
 *.py
+__pycache__/
 *.txt
+*.log
 log.txt
 log.txt.old
 node_modules/

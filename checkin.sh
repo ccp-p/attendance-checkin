@@ -55,6 +55,15 @@ PP_RESP="/sdcard/pp_resp.json"
 mkdir -p "$DIR" "$SHOT_DIR"
 log() { echo "[$(date +%H:%M:%S)] $1" | tee -a "$LOG_FILE" >&2; }
 
+# Auto-rotation state saved on entry, restored on exit
+AUTO_ROT=""
+restore_rotation() {
+    if [ -n "$AUTO_ROT" ]; then
+        settings put system accelerometer_rotation "$AUTO_ROT" 2>/dev/null
+    fi
+}
+trap restore_rotation EXIT
+
 # Cache flag - 1 means current dump is still valid
 DUMP_VALID=0
 invalidate_dump() { DUMP_VALID=0; }
@@ -368,6 +377,10 @@ goto_attendance() {
 
 main() {
     log "====== checkin started ======"
+    # Save auto-rotation state, then disable it (uiautomator dump tends to turn it on)
+    AUTO_ROT=$(settings get system accelerometer_rotation 2>/dev/null)
+    settings put system accelerometer_rotation 0
+
     log "STEP 0: wake screen & launch"
     # Wake up screen (cron runs while screen is off)
     input keyevent 224; sleep 1

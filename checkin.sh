@@ -60,9 +60,15 @@ AUTO_ROT=""
 restore_rotation() {
     if [ -n "$AUTO_ROT" ]; then
         settings put system accelerometer_rotation "$AUTO_ROT" 2>/dev/null
+        settings put system user_rotation 0 2>/dev/null
     fi
 }
 trap restore_rotation EXIT
+
+lock_rotation() {
+    settings put system accelerometer_rotation 0 2>/dev/null
+    settings put system user_rotation 0 2>/dev/null
+}
 
 # Cache flag - 1 means current dump is still valid
 DUMP_VALID=0
@@ -72,6 +78,7 @@ shot() { screencap -p "$SHOT_DIR/$1.png" 2>/dev/null; log "  shot: $1"; }
 
 dump_ui() {
     if [ "$DUMP_VALID" -eq 1 ] && [ -f "$UI_DUMP" ] && [ -s "$UI_DUMP" ]; then return 0; fi
+    lock_rotation
     rm -f "$UI_DUMP"
     uiautomator dump "$UI_DUMP" 2>/dev/null
     if [ -f "$UI_DUMP" ] && [ -s "$UI_DUMP" ]; then DUMP_VALID=1; return 0; fi
@@ -379,7 +386,7 @@ main() {
     log "====== checkin started ======"
     # Save auto-rotation state, then disable it (uiautomator dump tends to turn it on)
     AUTO_ROT=$(settings get system accelerometer_rotation 2>/dev/null)
-    settings put system accelerometer_rotation 0
+    lock_rotation
 
     log "STEP 0: wake screen & launch"
     # Wake up screen (cron runs while screen is off)
@@ -388,7 +395,10 @@ main() {
     am force-stop "$APP_PACKAGE"; sleep 1
     input keyevent KEYCODE_HOME; sleep 1
     invalidate_dump
-    monkey -p "$APP_PACKAGE" -c android.intent.category.LAUNCHER 1 2>/dev/null
+    # Use am start instead of monkey: monkey injects rotation events that
+    # enable auto-rotation on Android 14+ (see MonkeyRotationEven#injectEvent
+    # in dumpsys window RotationLockHistory)
+    am start -n "$APP_PACKAGE/com.cmic.module_main.ui.activity.WelcomeActivity" 2>/dev/null
     sleep "$TO_LAUNCH"
     invalidate_dump
     check_trusted

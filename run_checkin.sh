@@ -2,6 +2,8 @@
 # Run checkin via rish (Shizuku shell)
 # Enhanced with Shizuku auto-recovery + timestamped logging
 
+export HOME=/data/data/com.termux/files/home
+export TMPDIR=/data/data/com.termux/files/usr/tmp
 LOG=~/checkin_cron.log
 TS=$(date "+%Y-%m-%d %H:%M:%S")
 

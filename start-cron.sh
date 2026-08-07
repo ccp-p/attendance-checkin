@@ -1,5 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/sh
 # Termux:Boot script - starts crond + Shizuku with wakelock on boot
+export HOME=/data/data/com.termux/files/home
+export TMPDIR=/data/data/com.termux/files/usr/tmp
 LOG=~/checkin_cron.log
 TS=$(date "+%Y-%m-%d %H:%M:%S")
 

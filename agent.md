@@ -29,23 +29,25 @@ Phone-side automation runs via Termux + crond + Shizuku (rish):
 3. Then runs checkin.sh via rish
 
 ### Limitations
-- After phone reboot: service.adb.tcp.port may be empty and port 5555 may not be listening.
-  Fix: connect phone to PC via USB and run: adb tcpip 5555
 - Termux app user cannot read /proc/net/tcp (Android 16 SELinux restriction).
 - mDNS discovery (adb mdns services) does not work from Termux.
 - Shizuku app has no intent to auto-start the server.
+- Port scan takes ~60s (28000 ports with toybox nc, integer-only timeout).
+- adb daemon requires TMPDIR set to writable dir (default /tmp not accessible by Termux).
 
 ### Setup Steps (for new device)
 1. Install Termux + Termux:Boot, both in battery whitelist
 2. Install Shizuku, start server via USB: adb shell /data/app/.../libshizuku.so
 3. adb tcpip 5555 -- make adbd listen on port 5555
 4. Install android-tools in Termux: pkg install android-tools
-5. Copy adb key to Termux ~/.android/adbkey
+5. Copy adb key to Termux ~/.android/adbkey (must match key authorized on phone)
 6. Verify: adb connect 127.0.0.1:5555 from Termux, then adb shell whoami -> shell
 7. Copy rish + rish_shizuku.dex from Shizuku app to Termux home
 8. Push scripts to Termux home: start-cron.sh, run_checkin.sh, start-shizuku.sh, heartbeat.sh
 9. crontab checkin_crontab in Termux
 10. Grant: adb shell pm grant com.termux android.permission.WRITE_SECURE_SETTINGS
+11. Enable wireless debugging in developer options (adb_wifi_enabled=1, persists across reboot)
+12. Ensure TMPDIR is set in all scripts: export TMPDIR=/data/data/com.termux/files/usr/tmp
 
 - Three implementations: checkin.sh (shell, phone-side, primary), checkin.py (Python/u2, PC-driven), lib/flow.js (AutoJS6, deprecated)
 

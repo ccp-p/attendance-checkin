@@ -9,13 +9,13 @@ export TMPDIR=/data/data/com.termux/files/usr/tmp
 LOG=~/checkin_cron.log
 
 # Auto-start crond if not running
-if ! pgrep -x crond > /dev/null 2>&1; then
+if ! /system/bin/pgrep -x crond > /dev/null 2>&1; then
     rm -f /data/data/com.termux/files/usr/var/run/crond.pid 2>/dev/null
     termux-wake-lock 2>/dev/null
     nohup /data/data/com.termux/files/usr/bin/crond >> "$LOG" 2>&1 &
     sleep 1
-    if pgrep -x crond > /dev/null 2>&1; then
-        echo "[checkin] crond auto-started (pid $(pgrep -x crond))"
+    if /system/bin/pgrep -x crond > /dev/null 2>&1; then
+        echo "[checkin] crond auto-started (pid $(/system/bin/pgrep -x crond))"
     else
         echo "[checkin] WARNING: crond failed to start"
     fi

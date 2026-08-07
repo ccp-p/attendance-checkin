@@ -53,7 +53,7 @@ PP_LIST_BODY="/sdcard/pp_list.json"
 PP_RESP="/sdcard/pp_resp.json"
 
 mkdir -p "$DIR" "$SHOT_DIR"
-log() { echo "[$(date +%H:%M:%S)] $1" | tee -a "$LOG_FILE" >&2; }
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE" >&2; }
 
 # Auto-rotation state saved on entry, restored on exit
 AUTO_ROT=""

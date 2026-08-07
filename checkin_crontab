@@ -2,3 +2,5 @@
 20 7 * * 1-5 /data/data/com.termux/files/home/run_checkin.sh >> /data/data/com.termux/files/home/checkin_cron.log 2>&1
 # Checkout schedule - weekday evenings
 31 17 * * 1-5 /data/data/com.termux/files/home/run_checkin.sh >> /data/data/com.termux/files/home/checkin_cron.log 2>&1
+# Heartbeat - every 10 minutes for crond health monitoring
+*/10 * * * * echo "$(date '+%Y-%m-%d %H:%M:%S') crond-alive" >> /data/data/com.termux/files/home/checkin_cron.log 2>&1

@@ -48,7 +48,7 @@ done
 # 5. Crontab
 echo ""
 echo "--- Crontab ---"
-files/usr/bin/crontab -l 2>&1
+/data/data/com.termux/files/usr/bin/crontab -l 2>&1
 
 # 6. Last heartbeats
 echo ""

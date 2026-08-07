@@ -12,8 +12,8 @@ echo "Time: $(date '+%Y-%m-%d %H:%M:%S')"
 echo ""
 
 # 1. crond alive?
-if pgrep -x crond > /dev/null 2>&1; then
-    echo "[OK] crond running (pid $(pgrep -x crond))"
+if /system/bin/pgrep -x crond > /dev/null 2>&1; then
+    echo "[OK] crond running (pid $(/system/bin/pgrep -x crond))"
 else
     echo "[FAIL] crond NOT running! Fix: sh ~/start-cron.sh"
 fi

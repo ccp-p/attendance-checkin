@@ -13,8 +13,8 @@ echo "[$TS] starting crond" >> "$LOG"
 nohup crond >> "$LOG" 2>&1 &
 
 sleep 1
-if pgrep -x crond > /dev/null 2>&1; then
-    echo "[$TS] crond started, pid=$(pgrep -x crond)" >> "$LOG"
+if /system/bin/pgrep -x crond > /dev/null 2>&1; then
+    echo "[$TS] crond started, pid=$(/system/bin/pgrep -x crond)" >> "$LOG"
 else
     echo "[$TS] ERROR: crond failed to start!" >> "$LOG"
 fi

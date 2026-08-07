@@ -19,12 +19,15 @@ LOG=~/checkin_cron.log
 if ! pgrep -x crond > /dev/null 2>&1; then
     termux-wake-lock 2>/dev/null
     nohup /data/data/com.termux/files/usr/bin/crond >> "$LOG" 2>&1 &
-    sleep 0.5
-    if pgrep -x crond > /dev/null 2>&1; then
-        echo "[checkin] crond auto-started (pid $(pgrep -x crond))"
-    else
-        echo "[checkin] WARNING: crond failed to start!"
-    fi
+    # Retry check for up to 3 seconds (crond may need a moment to fork)
+    for i in 1 2 3 4 5 6; do
+        sleep 0.5
+        if pgrep -x crond > /dev/null 2>&1; then
+            echo "[checkin] crond auto-started (pid $(pgrep -x crond))"
+            break
+        fi
+        [ $i -eq 6 ] && echo "[checkin] WARNING: crond failed to start!"
+    done
 fi
 
 # Auto-start Shizuku if not responding (async, non-blocking)

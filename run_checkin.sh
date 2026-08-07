@@ -25,19 +25,24 @@ fi
 
 # Check if Shizuku is alive, recover if not
 log "probing Shizuku..."
-if rish_alive; then
-    log "Shizuku is running"
-else
+if ! rish_alive; then
     log "Shizuku not responding, auto-starting..."
     sh ~/start-shizuku.sh >> "$LOG" 2>&1
-
-    if rish_alive; then
-        log "Shizuku recovered successfully"
-    else
-        log "ERROR: Shizuku recovery failed! Aborting."
-        log "===== CRON ABORTED (no Shizuku) ====="
-        exit 1
-    fi
+    # start-shizuku.sh already retries rish internally, but binder can be
+    # flaky right after restart. Retry a few more times before giving up.
+    for i in 1 2 3 4 5; do
+        if rish_alive; then
+            log "Shizuku recovered (retry $i)"
+            break
+        fi
+        log "rish still failing (retry $i), waiting 3s..."
+        sleep 3
+        [ $i -eq 5 ] && {
+            log "ERROR: Shizuku recovery failed after all retries! Aborting."
+            log "===== CRON ABORTED (no Shizuku) ====="
+            exit 1
+        }
+    done
 fi
 
 # Check if checkin.sh exists

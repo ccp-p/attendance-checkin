@@ -1,12 +1,11 @@
 #!/data/data/com.termux/files/usr/bin/sh
 # Run checkin via rish (Shizuku shell)
-# Enhanced with timestamped logging for production reliability
+# Enhanced with Shizuku auto-recovery + timestamped logging
 
 LOG=~/checkin_cron.log
 TS=$(date "+%Y-%m-%d %H:%M:%S")
 
 echo "[$TS] ===== CRON TRIGGERED =====" >> "$LOG"
-echo "[$TS] run_checkin.sh started, pid=$$" >> "$LOG"
 
 # Check if rish exists
 if [ ! -f ~/rish ]; then
@@ -14,14 +13,31 @@ if [ ! -f ~/rish ]; then
     exit 1
 fi
 
+# Check if Shizuku is alive (quick probe via rish with timeout)
+echo "[$TS] probing Shizuku..." >> "$LOG"
+if echo 'echo SHIZUKU_OK' | timeout -s KILL 8 sh ~/rish 2>/dev/null | grep -q SHIZUKU_OK; then
+    echo "[$TS] Shizuku is running" >> "$LOG"
+else
+    echo "[$TS] Shizuku not responding, auto-starting..." >> "$LOG"
+    sh ~/start-shizuku.sh >> "$LOG" 2>&1
+    sleep 2
+    if echo 'echo SHIZUKU_OK' | timeout -s KILL 8 sh ~/rish 2>/dev/null | grep -q SHIZUKU_OK; then
+        echo "[$TS] Shizuku recovered successfully" >> "$LOG"
+    else
+        echo "[$TS] ERROR: Shizuku recovery failed!" >> "$LOG"
+        echo "[$TS] ===== CRON ABORTED (no Shizuku) =====" >> "$LOG"
+        exit 1
+    fi
+fi
+
 # Check if checkin.sh exists
 if [ ! -f /sdcard/checkin/checkin.sh ]; then
     echo "[$TS] ERROR: /sdcard/checkin/checkin.sh not found!" >> "$LOG"
+    echo "[$TS] ===== CRON ABORTED =====" >> "$LOG"
     exit 1
 fi
 
-# Run the checkin script via rish (shell user via Shizuku)
-echo "[$TS] executing: sh /sdcard/checkin/checkin.sh" >> "$LOG"
+echo "[$TS] executing checkin.sh via rish" >> "$LOG"
 echo 'sh /sdcard/checkin/checkin.sh' | sh ~/rish
 RC=$?
 

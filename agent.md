@@ -2,11 +2,52 @@
 
 ## Project Overview
 - Path: D:\project\my_py_project\attendance-checkin
-- Two implementations kept in sync: checkin.py (Python/u2, PC-driven) and lib/flow.js (AutoJS6, phone-side)
-- Both share config.js
 - Device: OPPO PJZ110 (1080x2376), Android 36, USB-connected
 - adb path: D:\codeTool\codeEnv\flutterEnv\AndroidSdk\platform-tools
 - Python: D:\codeTool\codeEnv\python\python.exe
+
+## Cron Architecture (Production)
+
+Phone-side automation runs via Termux + crond + Shizuku (rish):
+
+- **start-cron.sh** -- Termux:Boot script. Starts crond + schedules Shizuku auto-start 10s after boot.
+- **checkin_crontab** -- `20 7 * * 1-5` (morning), `31 17 * * 1-5` (evening), `*/10 * * * *` (heartbeat)
+- **run_checkin.sh** -- Cron entry. Probes Shizuku via rish, auto-recovers if dead, then runs checkin.sh via rish.
+- **start-shizuku.sh** -- Auto-recovers Shizuku server. Discovers adbd port via getprop, connects Termux adb to 127.0.0.1:PORT, runs libshizuku.so. Called by run_checkin.sh and start-cron.sh.
+- **heartbeat.sh** -- Every 10 min, logs crond-alive to verify crond is running.
+- **checkin.sh** -- Actual checkin flow, runs as shell user via rish. Located at /sdcard/checkin/checkin.sh.
+- **rish** -- Shizuku shell bridge. Requires shizuku_server running.
+
+### Shizuku Auto-Recovery Flow
+1. run_checkin.sh probes Shizuku: echo 'echo SHIZUKU_OK' | timeout -s KILL 8 sh ~/rish
+2. If dead, calls start-shizuku.sh:
+   a. getprop service.adb.tcp.port -> port (usually 5555, set by adb tcpip 5555)
+   b. adb connect 127.0.0.1:PORT -- Termux adb connects to phone's own adbd
+   c. adb shell pm path moe.shizuku.privileged.api -- finds apk, derives libshizuku.so path
+   d. adb shell $LIBSO -- starts shizuku_server as shell user
+   e. Verifies via rish
+3. Then runs checkin.sh via rish
+
+### Limitations
+- After phone reboot: service.adb.tcp.port may be empty and port 5555 may not be listening.
+  Fix: connect phone to PC via USB and run: adb tcpip 5555
+- Termux app user cannot read /proc/net/tcp (Android 16 SELinux restriction).
+- mDNS discovery (adb mdns services) does not work from Termux.
+- Shizuku app has no intent to auto-start the server.
+
+### Setup Steps (for new device)
+1. Install Termux + Termux:Boot, both in battery whitelist
+2. Install Shizuku, start server via USB: adb shell /data/app/.../libshizuku.so
+3. adb tcpip 5555 -- make adbd listen on port 5555
+4. Install android-tools in Termux: pkg install android-tools
+5. Copy adb key to Termux ~/.android/adbkey
+6. Verify: adb connect 127.0.0.1:5555 from Termux, then adb shell whoami -> shell
+7. Copy rish + rish_shizuku.dex from Shizuku app to Termux home
+8. Push scripts to Termux home: start-cron.sh, run_checkin.sh, start-shizuku.sh, heartbeat.sh
+9. crontab checkin_crontab in Termux
+10. Grant: adb shell pm grant com.termux android.permission.WRITE_SECURE_SETTINGS
+
+- Three implementations: checkin.sh (shell, phone-side, primary), checkin.py (Python/u2, PC-driven), lib/flow.js (AutoJS6, deprecated)
 
 ## Core Principle: Native uiautomator dump > u2 dump_hierarchy
 

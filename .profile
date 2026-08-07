@@ -1,12 +1,14 @@
-# .bashrc - Auto-recover crond + Shizuku when Termux is reopened
-# Termux gets killed by Android OOM killer; crond dies with it.
-# This runs every time you open the Termux app, ensuring crond is alive.
+# .profile - Auto-recover crond + Shizuku when Termux is reopened
+# Termux's login script (files/usr/bin/login) runs: exec $SHELL -l
+# For bash login shell, .bash_profile > .bash_login > .profile is sourced.
+# For dash login shell, .profile is sourced.
+# Using .profile covers both cases.
 
 export HOME=/data/data/com.termux/files/home
 export TMPDIR=/data/data/com.termux/files/usr/tmp
 LOG=~/checkin_cron.log
 
-# Auto-start crond if not running (check actual process, not pid file)
+# Auto-start crond if not running
 if ! pgrep -x crond > /dev/null 2>&1; then
     rm -f /data/data/com.termux/files/usr/var/run/crond.pid 2>/dev/null
     termux-wake-lock 2>/dev/null
@@ -15,7 +17,7 @@ if ! pgrep -x crond > /dev/null 2>&1; then
     if pgrep -x crond > /dev/null 2>&1; then
         echo "[checkin] crond auto-started (pid $(pgrep -x crond))"
     else
-        echo "[checkin] WARNING: crond failed to start!"
+        echo "[checkin] WARNING: crond failed to start"
     fi
 fi
 

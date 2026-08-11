@@ -317,7 +317,7 @@ get_code() {
 
 handle_trusted() {
     log "  checking trusted auth..."
-    for i in 1 2 3 4; do
+    for i in 1 2 3 4 5 6; do
         if text_exists "$T_TRUSTED_AUTH" || text_exists "$T_TRUSTED_AUTH_PLATFORM"; then
             log "  trusted auth!"; shot "trusted"
             input tap $COORD_CANCEL; sleep 1
@@ -328,7 +328,7 @@ handle_trusted() {
            shot "trusted_after_back"; return 0
         fi
         invalidate_dump
-        sleep 1
+        sleep 2
     done
     log "  no trusted auth"; return 1
 }

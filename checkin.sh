@@ -120,9 +120,6 @@ click_text() {
     dump_ui || return 1
     local line
     line=$(cat "$UI_DUMP" | sed 's/<node/\n<node/g' | grep "text=\"$text\"" | head -1)
-    if [ -z "$line" ]; then
-        line=$(cat "$UI_DUMP" | sed 's/<node/\n<node/g' | grep "$text" | head -1)
-    fi
     if [ -z "$line" ]; then log "  not found: $text"; return 1; fi
     local bounds
     bounds=$(echo "$line" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
@@ -147,9 +144,6 @@ click_text_last() {
     dump_ui || return 1
     local line
     line=$(cat "$UI_DUMP" | sed 's/<node/\n<node/g' | grep "text=\"$text\"" | tail -1)
-    if [ -z "$line" ]; then
-        line=$(cat "$UI_DUMP" | sed 's/<node/\n<node/g' | grep "$text" | tail -1)
-    fi
     if [ -z "$line" ]; then log "  not found: $text"; return 1; fi
     local bounds
     bounds=$(echo "$line" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
@@ -181,7 +175,6 @@ find_bounds() {
     local text="$1"
     local line
     line=$(cat "$UI_DUMP" 2>/dev/null | sed 's/<node/\n<node/g' | grep 'text="'"$text"'"' | head -1)
-    [ -z "$line" ] && line=$(cat "$UI_DUMP" 2>/dev/null | sed 's/<node/\n<node/g' | grep "$text" | head -1)
     [ -z "$line" ] && return 1
     local bounds
     bounds=$(echo "$line" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
@@ -420,41 +413,19 @@ detect_page() {
 }
 
 # Navigate to the attendance page regardless of current state.
-C_WORKBENCH=""; C_ATTENDANCE=""
 goto_attendance() {
     detect_page
     case $? in
         0) log "  already on attendance page"; return 0 ;;
         1) log "  on workbench, navigating to attendance"
-           click_cached C_WORKBENCH "$T_WORKBENCH"; sleep "$TO_PAGE"
-           # Wait for attendance button, cache coords when found
-           for ai in 1 2 3 4 5; do
-               invalidate_dump; dump_ui 2>/dev/null
-               C_ATTENDANCE=$(find_bounds "$T_ATTENDANCE")
-               [ -n "$C_ATTENDANCE" ] && { input tap $C_ATTENDANCE; log "  click 考勤打卡 at $C_ATTENDANCE"; return 0; }
-               sleep 1
-           done
-           log "  timeout: $T_ATTENDANCE"; return 1 ;;
+           click_text "$T_WORKBENCH"; sleep "$TO_PAGE"
+           click_text_wait "$T_ATTENDANCE" 5 || { log "  timeout: $T_ATTENDANCE"; return 1; }
+           return 0 ;;
         2) log "  unknown page, trying workbench first"
-           # Try cached workbench, or find via dump
-           if [ -z "$C_WORKBENCH" ]; then
-               for wi in 1 2 3 4 5; do
-                   invalidate_dump; dump_ui 2>/dev/null
-                   C_WORKBENCH=$(find_bounds "$T_WORKBENCH")
-                   [ -n "$C_WORKBENCH" ] && break
-                   sleep 1
-               done
-           fi
-           [ -z "$C_WORKBENCH" ] && { log "  timeout: $T_WORKBENCH"; return 1; }
-           input tap $C_WORKBENCH; log "  click 工作台 at $C_WORKBENCH"; sleep "$TO_PAGE"
-           # Now find attendance
-           for ai in 1 2 3 4 5; do
-               invalidate_dump; dump_ui 2>/dev/null
-               C_ATTENDANCE=$(find_bounds "$T_ATTENDANCE")
-               [ -n "$C_ATTENDANCE" ] && { input tap $C_ATTENDANCE; log "  click 考勤打卡 at $C_ATTENDANCE"; return 0; }
-               sleep 1
-           done
-           log "  timeout: $T_ATTENDANCE"; return 1 ;;
+           click_text_wait "$T_WORKBENCH" 5 || { log "  timeout: $T_WORKBENCH"; return 1; }
+           sleep "$TO_PAGE"
+           click_text_wait "$T_ATTENDANCE" 5 || { log "  timeout: $T_ATTENDANCE"; return 1; }
+           return 0 ;;
     esac
 }
 
@@ -494,7 +465,6 @@ main() {
     # Retry loop: handle location error popup, then click 签到/签退
     # Uses cached coords after first successful dump
     checkin_done=0
-    C_CHECKIN=""; C_CHECKOUT=""
     for ci in 1 2 3 4 5 6; do
         # Check location error popup (needs dump)
         if text_exists "$T_LOC_ERROR"; then
@@ -502,8 +472,8 @@ main() {
         fi
         # Fresh dump for checkin/checkout (WebView may still be loading)
         invalidate_dump
-        if click_cached C_CHECKIN "$T_CHECKIN"; then checkin_done=1; break; fi
-        if click_cached C_CHECKOUT "$T_CHECKOUT"; then checkin_done=1; break; fi
+        if click_text "$T_CHECKIN"; then checkin_done=1; break; fi
+        if click_text "$T_CHECKOUT"; then checkin_done=1; break; fi
         log "  retry checkin ($ci)"
         sleep 2
     done
@@ -523,23 +493,11 @@ main() {
     if ! wait_for_any "$T_GET_CODE" "$T_SMS_LOGIN" "$TO_LOGIN"; then fail "login page"; fi
 
     log "STEP 4: input phone (custom number pad)"
-
-    # Single dump: check for 获取验证码 AND cache its coords for STEP 6
-    C_GETCODE=""
     dump_ui 2>/dev/null
-    if grep -q "$T_GET_CODE" "$UI_DUMP" 2>/dev/null; then
-        C_GETCODE=$(find_bounds "$T_GET_CODE")
-    else
+    if ! grep -q "$T_GET_CODE" "$UI_DUMP" 2>/dev/null; then
         log "  clicking sms login to activate input mode"
-        click_cached C_SMS_LOGIN "$T_SMS_LOGIN" || fail "sms login"
-        # Wait for 获取验证码, cache coords when found
-        for wi in 1 2 3 4 5 6 7 8 9 10; do
-            invalidate_dump; dump_ui 2>/dev/null
-            C_GETCODE=$(find_bounds "$T_GET_CODE")
-            [ -n "$C_GETCODE" ] && break
-            sleep 1
-        done
-        [ -z "$C_GETCODE" ] && log "  get code not found"
+        click_text "$T_SMS_LOGIN" || fail "sms login"
+        wait_for_text "$T_GET_CODE" 10 || log "  get code not found"
     fi
     sleep 1
 

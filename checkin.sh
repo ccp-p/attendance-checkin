@@ -317,7 +317,7 @@ get_code() {
 
 handle_trusted() {
     log "  checking trusted auth..."
-    for i in 1 2 3 4 5 6; do
+    for i in 1 2 3 4; do
         if text_exists "$T_TRUSTED_AUTH" || text_exists "$T_TRUSTED_AUTH_PLATFORM"; then
             log "  trusted auth!"; shot "trusted"
             input tap $COORD_CANCEL; sleep 1
@@ -328,7 +328,7 @@ handle_trusted() {
            shot "trusted_after_back"; return 0
         fi
         invalidate_dump
-        sleep 2
+        sleep 1
     done
     log "  no trusted auth"; return 1
 }
@@ -502,9 +502,11 @@ main() {
     code=$(echo "$code" | grep -oE '[0-9]{4,8}' | head -1)
     log "  code: $code"
 
-    # Tap the EditText to focus it
+    # Single dump: find EditText + submit button coords at once
     invalidate_dump
     dump_ui 2>/dev/null
+
+    # Find EditText
     et=$(cat "$UI_DUMP" 2>/dev/null | sed 's/<node/\n<node/g' | grep "EditText" | head -1)
     if [ -n "$et" ]; then
         eb=$(echo "$et" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
@@ -514,51 +516,58 @@ main() {
             ex2=$(echo "$en" | cut -d, -f3); ey2=$(echo "$en" | cut -d, -f4)
             cx=$(( (ex1 + ex2) / 2 )); cy=$(( (ey1 + ey2) / 2 ))
             log "  tap EditText at $cx,$cy"
-            input tap "$cx" "$cy"; sleep 1
+            input tap "$cx" "$cy"
         else
-            log "  EditText found but no bounds, tap 496,1306"
-            input tap 496 1306; sleep 1
+            log "  EditText no bounds, tap 496,1306"
+            input tap 496 1306
         fi
     else
         log "  EditText not found, tap 496,1306"
-        input tap 496 1306; sleep 1
+        input tap 496 1306
     fi
+    sleep 0.5
 
     # Type the code
     input text "$code"
     log "  input text: $code"
-    sleep 1
 
     # Dismiss keyboard - it covers the submit button
     log "  hiding keyboard"
     input keyevent 4
     sleep 1
 
-    # Verify code was entered
+    # Single dump: verify code entered + find submit button
     invalidate_dump
     dump_ui 2>/dev/null
     if grep -q "$code" "$UI_DUMP" 2>/dev/null; then
         log "  code verified in EditText"
     else
-        log "  WARNING: code not in dump after keyboard dismiss"
+        log "  WARNING: code not in dump"
     fi
 
     log "STEP 9: submit"
-    # Now find submit button with keyboard gone
-    invalidate_dump
-    # Re-dump to get updated coordinates
-    dump_ui 2>/dev/null
-    if click_text "$T_SMS_LOGIN"; then
-        log "  clicked submit"
+    # Use cached dump to find submit button (no extra dump)
+    submit_line=$(cat "$UI_DUMP" 2>/dev/null | sed 's/<node/\n<node/g' | grep "text=\"$T_SMS_LOGIN\"" | head -1)
+    if [ -n "$submit_line" ]; then
+        sb=$(echo "$submit_line" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
+        if [ -n "$sb" ]; then
+            sn=$(echo "$sb" | sed 's/\]\[/,/g; s/[^0-9,]//g')
+            sx1=$(echo "$sn" | cut -d, -f1); sy1=$(echo "$sn" | cut -d, -f2)
+            sx2=$(echo "$sn" | cut -d, -f3); sy2=$(echo "$sn" | cut -d, -f4)
+            scx=$(( (sx1 + sx2) / 2 )); scy=$(( (sy1 + sy2) / 2 ))
+            input tap "$scx" "$scy"
+            log "  clicked submit at $scx,$scy"
+        else
+            input tap 540 1536
+            log "  submit no bounds, tap 540,1536"
+        fi
     else
-        log "  submit btn not found via text, trying known coords"
-        # Try multiple known positions for submit button
-        input tap 540 1536; sleep "$TO_PAGE"
+        input tap 540 1536
+        log "  submit not found, tap 540,1536"
     fi
-    sleep "$TO_PAGE"
+    sleep 1
 
     log "STEP 10: trusted auth"
-    check_trusted
     handle_trusted
 
     log "STEP 11: check result"

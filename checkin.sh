@@ -175,6 +175,57 @@ click_text_wait() {
 
 click_xy() { input tap "$1" "$2"; invalidate_dump; log "  tap ($1,$2)"; }
 
+# --- Coordinate cache ---
+# Find text bounds from current dump (no extra dump needed)
+find_bounds() {
+    local text="$1"
+    local line
+    line=$(cat "$UI_DUMP" 2>/dev/null | sed 's/<node/\n<node/g' | grep 'text="'"$text"'"' | head -1)
+    [ -z "$line" ] && line=$(cat "$UI_DUMP" 2>/dev/null | sed 's/<node/\n<node/g' | grep "$text" | head -1)
+    [ -z "$line" ] && return 1
+    local bounds
+    bounds=$(echo "$line" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
+    [ -z "$bounds" ] && return 1
+    local nums
+    nums=$(echo "$bounds" | sed 's/\]\[/,/g; s/[^0-9,]//g')
+    local x1 y1 x2 y2 cx cy
+    x1=$(echo "$nums" | cut -d, -f1); y1=$(echo "$nums" | cut -d, -f2)
+    x2=$(echo "$nums" | cut -d, -f3); y2=$(echo "$nums" | cut -d, -f4)
+    cx=$(( (x1 + x2) / 2 )); cy=$(( (y1 + y2) / 2 ))
+    echo "$cx $cy"
+    return 0
+}
+
+# Click text using cached coords if available, else dump+find+cache
+# Usage: click_cached VARNAME "text"
+# Cache: click text, store coords in named global var
+# Usage: click_cached CACHE_VAR "text"
+click_cached() {
+    local cv="$1" text="$2"
+    # Read cached value
+    local val
+    val=$(cat /sdcard/checkin/.cache_"$cv" 2>/dev/null)
+    if [ -n "$val" ]; then
+        input tap $val
+        log "  click cached $text at $val"
+        invalidate_dump
+        return 0
+    fi
+    # Not cached - find via dump
+    dump_ui || return 1
+    local coords
+    coords=$(find_bounds "$text")
+    if [ -z "$coords" ]; then
+        log "  not found: $text"
+        return 1
+    fi
+    echo "$coords" > /sdcard/checkin/.cache_"$cv"
+    input tap $coords
+    log "  click $text at $coords (cached)"
+    invalidate_dump
+    return 0
+}
+
 dismiss_loc() {
     if text_exists "$T_LOC_ERROR"; then
         log "  loc popup"; click_text "$T_CONFIRM"; sleep 1; return 0
@@ -369,21 +420,48 @@ detect_page() {
 }
 
 # Navigate to the attendance page regardless of current state.
+C_WORKBENCH=""; C_ATTENDANCE=""
 goto_attendance() {
     detect_page
     case $? in
         0) log "  already on attendance page"; return 0 ;;
         1) log "  on workbench, navigating to attendance"
-           click_text "$T_WORKBENCH"; sleep "$TO_PAGE"
-           click_text_wait "$T_ATTENDANCE" "$TO_FIND"; return $? ;;
+           click_cached C_WORKBENCH "$T_WORKBENCH"; sleep "$TO_PAGE"
+           # Wait for attendance button, cache coords when found
+           for ai in 1 2 3 4 5; do
+               invalidate_dump; dump_ui 2>/dev/null
+               C_ATTENDANCE=$(find_bounds "$T_ATTENDANCE")
+               [ -n "$C_ATTENDANCE" ] && { input tap $C_ATTENDANCE; log "  click 考勤打卡 at $C_ATTENDANCE"; return 0; }
+               sleep 1
+           done
+           log "  timeout: $T_ATTENDANCE"; return 1 ;;
         2) log "  unknown page, trying workbench first"
-           click_text_wait "$T_WORKBENCH" "$TO_FIND"; sleep "$TO_PAGE"
-           click_text_wait "$T_ATTENDANCE" "$TO_FIND"; return $? ;;
+           # Try cached workbench, or find via dump
+           if [ -z "$C_WORKBENCH" ]; then
+               for wi in 1 2 3 4 5; do
+                   invalidate_dump; dump_ui 2>/dev/null
+                   C_WORKBENCH=$(find_bounds "$T_WORKBENCH")
+                   [ -n "$C_WORKBENCH" ] && break
+                   sleep 1
+               done
+           fi
+           [ -z "$C_WORKBENCH" ] && { log "  timeout: $T_WORKBENCH"; return 1; }
+           input tap $C_WORKBENCH; log "  click 工作台 at $C_WORKBENCH"; sleep "$TO_PAGE"
+           # Now find attendance
+           for ai in 1 2 3 4 5; do
+               invalidate_dump; dump_ui 2>/dev/null
+               C_ATTENDANCE=$(find_bounds "$T_ATTENDANCE")
+               [ -n "$C_ATTENDANCE" ] && { input tap $C_ATTENDANCE; log "  click 考勤打卡 at $C_ATTENDANCE"; return 0; }
+               sleep 1
+           done
+           log "  timeout: $T_ATTENDANCE"; return 1 ;;
     esac
 }
 
 main() {
     log "====== checkin started ======"
+    # Clear coordinate cache
+    rm -f /sdcard/checkin/.cache_* 2>/dev/null
     # Save auto-rotation state, then disable it (uiautomator dump tends to turn it on)
     AUTO_ROT=$(settings get system accelerometer_rotation 2>/dev/null)
     lock_rotation
@@ -414,12 +492,17 @@ main() {
 
     log "STEP 2: checkin/checkout"
     # Retry loop: handle location error popup, then click 签到/签退
+    # Uses cached coords after first successful dump
     checkin_done=0
+    C_CHECKIN=""; C_CHECKOUT=""
     for ci in 1 2 3 4 5 6; do
-        dismiss_loc
-        invalidate_dump
-        if click_text "$T_CHECKIN"; then checkin_done=1; break; fi
-        if click_text "$T_CHECKOUT"; then checkin_done=1; break; fi
+        # Check location error popup (needs dump)
+        if text_exists "$T_LOC_ERROR"; then
+            log "  loc popup"; click_text "$T_CONFIRM"; sleep 1; invalidate_dump
+        fi
+        # Try cached click (no dump needed after first find)
+        if click_cached C_CHECKIN "$T_CHECKIN"; then checkin_done=1; break; fi
+        if click_cached C_CHECKOUT "$T_CHECKOUT"; then checkin_done=1; break; fi
         log "  retry checkin ($ci)"
         sleep 2
     done
@@ -440,12 +523,22 @@ main() {
 
     log "STEP 4: input phone (custom number pad)"
 
-    # Click 短信验证码登录 first to activate phone input mode
-    if ! text_exists "$T_GET_CODE"; then
+    # Single dump: check for 获取验证码 AND cache its coords for STEP 6
+    C_GETCODE=""
+    dump_ui 2>/dev/null
+    if grep -q "$T_GET_CODE" "$UI_DUMP" 2>/dev/null; then
+        C_GETCODE=$(find_bounds "$T_GET_CODE")
+    else
         log "  clicking sms login to activate input mode"
-        if ! click_text "$T_SMS_LOGIN"; then fail "sms login"; fi
-        invalidate_dump
-        if ! wait_for_text "$T_GET_CODE" 10; then log "  get code?"; fi
+        click_cached C_SMS_LOGIN "$T_SMS_LOGIN" || fail "sms login"
+        # Wait for 获取验证码, cache coords when found
+        for wi in 1 2 3 4 5 6 7 8 9 10; do
+            invalidate_dump; dump_ui 2>/dev/null
+            C_GETCODE=$(find_bounds "$T_GET_CODE")
+            [ -n "$C_GETCODE" ] && break
+            sleep 1
+        done
+        [ -z "$C_GETCODE" ] && log "  get code not found"
     fi
     sleep 1
 
@@ -489,7 +582,12 @@ main() {
     fi
 
     log "STEP 6: request code"
-    if ! click_text "$T_GET_CODE"; then click_xy 870 1207; fi
+    if [ -n "$C_GETCODE" ]; then
+        input tap $C_GETCODE
+        log "  click cached 获取验证码 at $C_GETCODE"
+    else
+        click_xy 870 1207
+    fi
     sleep 2
 
     log "STEP 7: get code via pushplus"

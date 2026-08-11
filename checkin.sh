@@ -498,9 +498,10 @@ main() {
     for ci in 1 2 3 4 5 6; do
         # Check location error popup (needs dump)
         if text_exists "$T_LOC_ERROR"; then
-            log "  loc popup"; click_text "$T_CONFIRM"; sleep 1; invalidate_dump
+            log "  loc popup"; click_text "$T_CONFIRM"; sleep 1
         fi
-        # Try cached click (no dump needed after first find)
+        # Fresh dump for checkin/checkout (WebView may still be loading)
+        invalidate_dump
         if click_cached C_CHECKIN "$T_CHECKIN"; then checkin_done=1; break; fi
         if click_cached C_CHECKOUT "$T_CHECKOUT"; then checkin_done=1; break; fi
         log "  retry checkin ($ci)"

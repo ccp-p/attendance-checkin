@@ -583,12 +583,9 @@ main() {
     fi
 
     log "STEP 6: request code"
-    if [ -n "$C_GETCODE" ]; then
-        input tap $C_GETCODE
-        log "  click cached 获取验证码 at $C_GETCODE"
-    else
-        click_xy 870 1207
-    fi
+    # Fresh dump - page layout may have shifted after entering phone digits
+    invalidate_dump
+    if ! click_text "$T_GET_CODE"; then click_xy 870 1207; fi
     sleep 2
 
     log "STEP 7: get code via pushplus"

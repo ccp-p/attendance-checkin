@@ -586,7 +586,26 @@ main() {
     # Fresh dump - page layout may have shifted after entering phone digits
     invalidate_dump
     if ! click_text "$T_GET_CODE"; then click_xy 870 1207; fi
+
+    # Verify button was actually clicked (countdown timer appears)
     sleep 2
+    invalidate_dump
+    dump_ui 2>/dev/null
+    if cat "$UI_DUMP" 2>/dev/null | grep -qE '[0-9]+s'; then
+        log "  code requested, countdown detected"
+    else
+        log "  WARNING: countdown not found, retrying click"
+        # Try known coords as fallback
+        input tap 870 1207
+        sleep 2
+        invalidate_dump
+        dump_ui 2>/dev/null
+        if cat "$UI_DUMP" 2>/dev/null | grep -qE '[0-9]+s'; then
+            log "  code requested on retry, countdown detected"
+        else
+            log "  WARNING: no countdown after retry"
+        fi
+    fi
 
     log "STEP 7: get code via pushplus"
     code=$(get_code)

@@ -196,11 +196,11 @@ function checkTrigger(messages) {
 }
 
 // ===== STK foreground detection =====
-// Quiet check + log foreground every N calls to reduce noise
+// Quiet check + log foreground every 15s during STK wait
 function isStkForegroundSparse(checkCount) {
     try {
         var pkg = currentPackage();
-        if (checkCount % 5 === 0) {
+        if (checkCount % 15 === 0) {
             if (pkg) {
                 log("    [check #" + checkCount + "] foreground: " + pkg + (pkg.indexOf("com.android.stk") >= 0 ? " [STK!]" : " [not STK]"));
             } else {
@@ -220,15 +220,8 @@ function isStkForegroundSparse(checkCount) {
 function doStkInput(code) {
     log("====== TRIGGER RECEIVED ======");
     log("  --- READINESS CHECK ---");
-    log("    [OK] pushplus trigger  : HIT");
-    log("    [OK] time window       : VALID (within " + (TRIGGER_WINDOW / 1000) + "s)");
-    log("    [OK] input code        : " + code);
-    log("    [OK] foreground detect : working");
-    log("    [--] STK popup         : NOT YET");
-    log("  ==========================");
-    log("  >>> ALL READY - only STK popup remaining <<<");
-    log("  >>> STK uses are limited, will input code when STK appears <<<");
-    log("  timeout: " + (STK_WAIT_TIMEOUT / 1000) + "s");
+    log("    trigger=OK, code=" + code + ", window=" + (TRIGGER_WINDOW / 1000) + "s");
+    log("  >>> ALL READY - only STK popup remaining (timeout " + (STK_WAIT_TIMEOUT / 1000) + "s) <<<");
     var deadline = Date.now() + STK_WAIT_TIMEOUT;
     var checkCount = 0;
     while (Date.now() < deadline) {
@@ -246,10 +239,7 @@ function doStkInput(code) {
         }
         sleep(STK_CHECK_INTERVAL);
     }
-    log("  !!! TIMEOUT: STK NOT APPEARED after " + checkCount + " checks (" + (STK_WAIT_TIMEOUT / 1000) + "s)");
-    log("  !!! Pushplus trigger was OK, code was ready [" + code + "]");
-    log("  !!! ONLY the STK popup did not appear - everything else passed");
-    log("  !!! If STK was expected, check SIM/STK settings on device");
+    log("  !!! TIMEOUT: STK not appeared in " + (STK_WAIT_TIMEOUT / 1000) + "s - trigger was OK, code=" + code + ", only STK missing");
     return false;
 }
 

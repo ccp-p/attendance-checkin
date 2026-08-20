@@ -25,6 +25,9 @@ var POLL_INTERVAL = 15000;      // ms between pushplus polls
 var STK_WAIT_TIMEOUT = 60000;   // ms to wait for STK after trigger
 var STK_CHECK_INTERVAL = 1000;  // ms between STK foreground checks
 var TRIGGER_WINDOW = 120000;    // ms (2 min) - ignore trigger older than this
+var HTTP_CONNECT_TIMEOUT = 10000;  // ms
+var HTTP_READ_TIMEOUT = 10000;     // ms
+var HTTP_MAX_RETRIES = 3;          // retry count on network error
 
 // ===== State =====
 var accessKey = "";
@@ -36,23 +39,74 @@ function log(msg) {
     console.log("[" + ts + "] " + msg);
 }
 
+// ===== HTTP (Java HttpURLConnection with explicit timeouts) =====
+function httpPost(urlStr, jsonBody, headerMap) {
+    var lastErr = "";
+    for (var attempt = 1; attempt <= HTTP_MAX_RETRIES; attempt++) {
+        try {
+            var url = new java.net.URL(urlStr);
+            var conn = url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(HTTP_CONNECT_TIMEOUT);
+            conn.setReadTimeout(HTTP_READ_TIMEOUT);
+            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            conn.setRequestProperty("Accept", "application/json");
+            if (headerMap) {
+                var keys = Object.keys(headerMap);
+                for (var k = 0; k < keys.length; k++) {
+                    conn.setRequestProperty(keys[k], headerMap[keys[k]]);
+                }
+            }
+            conn.setDoOutput(true);
+            var bodyStr = JSON.stringify(jsonBody);
+            var os = conn.getOutputStream();
+            os.write(new java.lang.String(bodyStr).getBytes("UTF-8"));
+            os.flush();
+            os.close();
+
+            var code = conn.getResponseCode();
+            var is;
+            if (code >= 200 && code < 300) {
+                is = conn.getInputStream();
+            } else {
+                is = conn.getErrorStream();
+                if (!is) {
+                    lastErr = "HTTP " + code;
+                    log("  httpPost attempt " + attempt + ": HTTP " + code);
+                    if (attempt < HTTP_MAX_RETRIES) sleep(3000);
+                    continue;
+                }
+            }
+            var scanner = new java.util.Scanner(is, "UTF-8").useDelimiter("\\A");
+            var respStr = scanner.hasNext() ? scanner.next() : "";
+            scanner.close();
+            is.close();
+            conn.disconnect();
+            return JSON.parse(respStr);
+        } catch (e) {
+            lastErr = String(e);
+            if (attempt < HTTP_MAX_RETRIES) {
+                log("  httpPost attempt " + attempt + "/" + HTTP_MAX_RETRIES + " failed: " + lastErr + ", retry in 3s");
+                sleep(3000);
+            } else {
+                log("  httpPost FAILED after " + HTTP_MAX_RETRIES + " attempts: " + lastErr);
+            }
+        }
+    }
+    return null;
+}
+
 // ===== PushPlus API =====
 function getAccessKey() {
-    try {
-        var resp = http.postJson(PP_API_BASE + "/api/common/openApi/getAccessKey", {
-            token: PP_TOKEN,
-            secretKey: PP_SECRET
-        });
-        var body = resp.body.json();
-        if (body && body.data && body.data.accessKey) {
-            return body.data.accessKey;
-        }
-        log("getAccessKey: unexpected response: " + JSON.stringify(body));
-        return "";
-    } catch (e) {
-        log("getAccessKey error: " + e);
-        return "";
+    var body = httpPost(PP_API_BASE + "/api/common/openApi/getAccessKey", {
+        token: PP_TOKEN,
+        secretKey: PP_SECRET
+    });
+    if (body && body.data && body.data.accessKey) {
+        return body.data.accessKey;
     }
+    log("getAccessKey: unexpected or null response: " + JSON.stringify(body));
+    return "";
 }
 
 function fetchLatestMessage() {
@@ -60,34 +114,29 @@ function fetchLatestMessage() {
         accessKey = getAccessKey();
         if (!accessKey) return null;
     }
-    try {
-        var resp = http.postJson(PP_API_BASE + "/api/open/message/list", {
+    var body = httpPost(PP_API_BASE + "/api/open/message/list", {
+        current: 1,
+        pageSize: 5
+    }, {
+        "access-key": accessKey
+    });
+    if (!body) return null;
+    if (body && body.code === 40) {
+        log("accessKey expired, refreshing...");
+        accessKey = getAccessKey();
+        if (!accessKey) return null;
+        body = httpPost(PP_API_BASE + "/api/open/message/list", {
             current: 1,
             pageSize: 5
         }, {
-            headers: { "access-key": accessKey }
+            "access-key": accessKey
         });
-        var body = resp.body.json();
-        if (body && body.code === 40) {
-            log("accessKey expired, refreshing...");
-            accessKey = getAccessKey();
-            if (!accessKey) return null;
-            resp = http.postJson(PP_API_BASE + "/api/open/message/list", {
-                current: 1,
-                pageSize: 5
-            }, {
-                headers: { "access-key": accessKey }
-            });
-            body = resp.body.json();
-        }
-        if (body && body.data && body.data.list && body.data.list.length > 0) {
-            return body.data.list;
-        }
-        return [];
-    } catch (e) {
-        log("fetchLatestMessage error: " + e);
-        return null;
+        if (!body) return null;
     }
+    if (body && body.data && body.data.list && body.data.list.length > 0) {
+        return body.data.list;
+    }
+    return [];
 }
 
 // Parse pushplus updateTime "2026-08-19 17:44:16" to epoch ms

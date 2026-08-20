@@ -43,6 +43,16 @@ function log(msg) {
 }
 
 // ===== HTTP (Java HttpURLConnection with explicit timeouts) =====
+// Pre-create TLS 1.2 SSL factory - fixes Android 8 SSL handshake errors
+var sslSocketFactory = null;
+try {
+    var sslCtx = javax.net.ssl.SSLContext.getInstance("TLSv1.2");
+    sslCtx.init(null, null, null);
+    sslSocketFactory = sslCtx.getSocketFactory();
+} catch (e) {
+    log("SSL TLSv1.2 init failed, using default: " + e);
+}
+
 function httpPost(urlStr, jsonBody, headerMap) {
     var lastErr = "";
     for (var attempt = 1; attempt <= HTTP_MAX_RETRIES; attempt++) {
@@ -52,6 +62,10 @@ function httpPost(urlStr, jsonBody, headerMap) {
             conn.setRequestMethod("POST");
             conn.setConnectTimeout(HTTP_CONNECT_TIMEOUT);
             conn.setReadTimeout(HTTP_READ_TIMEOUT);
+            // Force TLS 1.2 for Android 8 compatibility
+            if (sslSocketFactory && urlStr.indexOf("https") === 0) {
+                conn.setSSLSocketFactory(sslSocketFactory);
+            }
             conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
             conn.setRequestProperty("Accept", "application/json");
             if (headerMap) {
@@ -75,7 +89,6 @@ function httpPost(urlStr, jsonBody, headerMap) {
                 is = conn.getErrorStream();
                 if (!is) {
                     lastErr = "HTTP " + code;
-                    log("  httpPost attempt " + attempt + ": HTTP " + code);
                     if (attempt < HTTP_MAX_RETRIES) sleep(3000);
                     continue;
                 }
@@ -89,7 +102,6 @@ function httpPost(urlStr, jsonBody, headerMap) {
         } catch (e) {
             lastErr = String(e);
             if (attempt < HTTP_MAX_RETRIES) {
-                log("  httpPost attempt " + attempt + "/" + HTTP_MAX_RETRIES + " failed: " + lastErr + ", retry in 3s");
                 sleep(3000);
             } else {
                 log("  httpPost FAILED after " + HTTP_MAX_RETRIES + " attempts: " + lastErr);

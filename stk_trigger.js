@@ -31,7 +31,10 @@ var HTTP_MAX_RETRIES = 3;          // retry count on network error
 
 // ===== State =====
 var accessKey = "";
-var baselineShortCode = "";
+// Time-based dedup: only process messages newer than lastSeenTime.
+// On startup, set to (now - TRIGGER_WINDOW) so messages from the last 2 min
+// are still processed, but older ones are skipped.
+var lastSeenTime = 0;
 
 // ===== Logging =====
 function log(msg) {
@@ -149,23 +152,24 @@ function parseUpdateTime(str) {
 
 // ===== Trigger detection =====
 // Returns the input code if trigger found (and within 2min window), "" otherwise.
+// Uses lastSeenTime to skip already-processed messages.
 function checkTrigger(messages) {
     var newCount = 0;
     var triggerFound = false;
     for (var i = 0; i < messages.length; i++) {
         var msg = messages[i];
         var title = msg.title || "";
-        var sc = msg.shortCode || "";
-        if (sc === baselineShortCode) continue;
+        var msgTime = parseUpdateTime(msg.updateTime || "");
+        // Skip messages already seen (older than or equal to lastSeenTime)
+        if (msgTime > 0 && msgTime <= lastSeenTime) continue;
         newCount++;
         var idx = title.indexOf(TRIGGER_KEYWORD);
         if (idx >= 0) {
             triggerFound = true;
             log(">>> PUSHPLUS TRIGGER HIT <<<");
             log("    title: " + title);
-            log("    shortCode: " + sc);
+            log("    shortCode: " + (msg.shortCode || ""));
             log("    updateTime: " + (msg.updateTime || "unknown"));
-            var msgTime = parseUpdateTime(msg.updateTime || "");
             if (msgTime > 0 && (Date.now() - msgTime) > TRIGGER_WINDOW) {
                 var age = Math.round((Date.now() - msgTime) / 1000);
                 log("    [EXPIRED] age=" + age + "s > " + (TRIGGER_WINDOW / 1000) + "s, skipping");
@@ -269,26 +273,23 @@ function main() {
     }
     log("accessKey obtained");
 
-    var msgs = fetchLatestMessage();
-    if (msgs && msgs.length > 0) {
-        baselineShortCode = msgs[0].shortCode || "";
-        log("baseline shortCode: " + baselineShortCode);
-    } else {
-        log("no existing messages, baseline empty");
-    }
+    // Set lastSeenTime to (now - TRIGGER_WINDOW) so messages from the last 2 min
+    // are still processed on startup, but older ones are skipped.
+    lastSeenTime = Date.now() - TRIGGER_WINDOW;
+    log("lastSeenTime initialized to " + new Date(lastSeenTime).toLocaleString("zh-CN") + " (now - " + (TRIGGER_WINDOW / 1000) + "s)");
 
     while (true) {
         var messages = fetchLatestMessage();
         if (messages && messages.length > 0) {
-            var newestSc = messages[0].shortCode || "";
             var code = checkTrigger(messages);
+            // Update lastSeenTime to the newest message's time
+            var newestTime = parseUpdateTime(messages[0].updateTime || "");
+            if (newestTime > lastSeenTime) {
+                lastSeenTime = newestTime;
+            }
             if (code) {
                 doStkInput(code);
-                baselineShortCode = newestSc;
                 log("=== trigger cycle complete, resuming polling ===");
-            } else if (newestSc !== baselineShortCode) {
-                baselineShortCode = newestSc;
-                log("new msg (not trigger), baseline updated: " + baselineShortCode);
             }
         }
         sleep(POLL_INTERVAL);

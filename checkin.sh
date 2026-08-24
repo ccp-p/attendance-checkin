@@ -431,16 +431,6 @@ goto_attendance() {
 
 main() {
     log "====== checkin started ======"
-    # Determine mode: morning=checkin, afternoon=checkout
-    CURRENT_HOUR=$(date +%H)
-    if [ "$CURRENT_HOUR" -ge 12 ]; then
-        CHECKIN_MODE="checkout"
-        log "  mode: checkout (hour=$CURRENT_HOUR)"
-    else
-        CHECKIN_MODE="checkin"
-        log "  mode: checkin (hour=$CURRENT_HOUR)"
-    fi
-
     # Clear coordinate cache
     rm -f /sdcard/checkin/.cache_* 2>/dev/null
     # Save auto-rotation state, then disable it (uiautomator dump tends to turn it on)
@@ -472,8 +462,10 @@ main() {
     invalidate_dump
 
     log "STEP 2: checkin/checkout"
-    # Retry loop: handle location error popup, then click 签到/签退
-    # Order depends on time: morning tries 签到 first, afternoon tries 签退 first
+    # Retry loop: click 签到 or 签退, then verify page actually changed.
+    # WebView may still be loading, so stale "签到" text can appear even
+    # when the real button is "签退". Fix: after clicking, check if login
+    # page appeared; if not, retry with fresh dump.
     checkin_done=0
     for ci in 1 2 3 4 5 6; do
         # Check location error popup (needs dump)
@@ -482,13 +474,9 @@ main() {
         fi
         # Fresh dump for checkin/checkout (WebView may still be loading)
         invalidate_dump
-        if [ "$CHECKIN_MODE" = "checkout" ]; then
-            if click_text "$T_CHECKOUT"; then checkin_done=1; break; fi
-            if click_text "$T_CHECKIN"; then checkin_done=1; break; fi
-        else
-            if click_text "$T_CHECKIN"; then checkin_done=1; break; fi
-            if click_text "$T_CHECKOUT"; then checkin_done=1; break; fi
-        fi
+        # Try both: whichever exists on page is the correct one
+        if click_text "$T_CHECKOUT"; then checkin_done=1; break; fi
+        if click_text "$T_CHECKIN"; then checkin_done=1; break; fi
         log "  retry checkin ($ci)"
         sleep 2
     done
@@ -505,7 +493,18 @@ main() {
     fi
 
     log "STEP 3: wait login"
-    if ! wait_for_any "$T_GET_CODE" "$T_SMS_LOGIN" "$TO_LOGIN"; then fail "login page"; fi
+    if ! wait_for_any "$T_GET_CODE" "$T_SMS_LOGIN" "$TO_LOGIN"; then
+        # Login page didn't appear - the click in STEP 2 may have hit a stale
+        # WebView element. Retry STEP 2 with a fresh dump.
+        log "  login not found, retrying checkin button..."
+        invalidate_dump
+        if click_text "$T_CHECKOUT"; then
+            sleep "$TO_PAGE"; invalidate_dump
+        elif click_text "$T_CHECKIN"; then
+            sleep "$TO_PAGE"; invalidate_dump
+        fi
+        if ! wait_for_any "$T_GET_CODE" "$T_SMS_LOGIN" "$TO_LOGIN"; then fail "login page"; fi
+    fi
 
     log "STEP 4: input phone (custom number pad)"
     dump_ui 2>/dev/null

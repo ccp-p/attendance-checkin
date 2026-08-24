@@ -431,6 +431,16 @@ goto_attendance() {
 
 main() {
     log "====== checkin started ======"
+    # Determine mode: morning=checkin, afternoon=checkout
+    CURRENT_HOUR=$(date +%H)
+    if [ "$CURRENT_HOUR" -ge 12 ]; then
+        CHECKIN_MODE="checkout"
+        log "  mode: checkout (hour=$CURRENT_HOUR)"
+    else
+        CHECKIN_MODE="checkin"
+        log "  mode: checkin (hour=$CURRENT_HOUR)"
+    fi
+
     # Clear coordinate cache
     rm -f /sdcard/checkin/.cache_* 2>/dev/null
     # Save auto-rotation state, then disable it (uiautomator dump tends to turn it on)
@@ -463,7 +473,7 @@ main() {
 
     log "STEP 2: checkin/checkout"
     # Retry loop: handle location error popup, then click 签到/签退
-    # Uses cached coords after first successful dump
+    # Order depends on time: morning tries 签到 first, afternoon tries 签退 first
     checkin_done=0
     for ci in 1 2 3 4 5 6; do
         # Check location error popup (needs dump)
@@ -472,8 +482,13 @@ main() {
         fi
         # Fresh dump for checkin/checkout (WebView may still be loading)
         invalidate_dump
-        if click_text "$T_CHECKIN"; then checkin_done=1; break; fi
-        if click_text "$T_CHECKOUT"; then checkin_done=1; break; fi
+        if [ "$CHECKIN_MODE" = "checkout" ]; then
+            if click_text "$T_CHECKOUT"; then checkin_done=1; break; fi
+            if click_text "$T_CHECKIN"; then checkin_done=1; break; fi
+        else
+            if click_text "$T_CHECKIN"; then checkin_done=1; break; fi
+            if click_text "$T_CHECKOUT"; then checkin_done=1; break; fi
+        fi
         log "  retry checkin ($ci)"
         sleep 2
     done

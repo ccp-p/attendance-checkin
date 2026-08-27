@@ -663,7 +663,18 @@ main() {
     if ! text_exists "$T_SMS_LOGIN"; then
         log "success"; log "====== checkin success ======"; exit 0
     fi
-    log "====== uncertain ======"; exit 0
+
+    # No success detected after trusted auth - kill app and retry from scratch
+    RETRY_COUNT="${RETRY_COUNT:-0}"
+    if [ "$RETRY_COUNT" -lt 2 ]; then
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        export RETRY_COUNT
+        log "  no success popup, killing app and retrying (attempt $RETRY_COUNT/2)"
+        am force-stop "$APP_PACKAGE"; sleep 2
+        input keyevent KEYCODE_HOME; sleep 1
+        exec "$0" "$@"
+    fi
+    log "====== uncertain (max retries reached) ======"; exit 0
 }
 
 main "$@"

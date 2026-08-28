@@ -36,7 +36,7 @@ TO_FIND=5
 TO_PAGE=2
 TO_LAUNCH=3
 TO_LOGIN=12
-TO_CODE=120
+TO_CODE=210
 TO_PUSHPLUS_DELAY=8
 TO_WX_LOAD=2
 
@@ -57,13 +57,21 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE" >&2; }
 
 # Auto-rotation state saved on entry, restored on exit
 AUTO_ROT=""
+SCREEN_TIMEOUT=""
 restore_rotation() {
     if [ -n "$AUTO_ROT" ]; then
         settings put system accelerometer_rotation "$AUTO_ROT" 2>/dev/null
         settings put system user_rotation 0 2>/dev/null
     fi
 }
-trap restore_rotation EXIT
+restore_device_state() {
+    restore_rotation
+    svc power stayon false >/dev/null 2>&1
+    if [ -n "$SCREEN_TIMEOUT" ]; then
+        settings put system screen_off_timeout "$SCREEN_TIMEOUT" 2>/dev/null
+    fi
+}
+trap restore_device_state EXIT
 
 lock_rotation() {
     settings put system accelerometer_rotation 0 2>/dev/null
@@ -328,7 +336,10 @@ get_code() {
         # Check if newest shortCode changed (new message arrived)
         new_sc=$(echo "$resp" | grep -o '"shortCode":"[^"]*"' | head -1 | sed 's/"shortCode":"//;s/"//')
         if [ "$new_sc" = "$latest_sc" ]; then
-            log "  pp: no new code yet"
+            if [ $i -eq 1 ] || [ $((i % 6)) -eq 0 ]; then
+                latest_time=$(echo "$resp" | grep -o '"updateTime":"[^"]*"' | head -1 | sed 's/"updateTime":"//;s/"//')
+                log "  pp: waiting (latest PushPlus: ${latest_time:-unknown})"
+            fi
             sleep "$TO_PP_POLL"
             continue
         fi
@@ -351,6 +362,7 @@ get_code() {
         done < /sdcard/pp_titles.txt
         rm -f /sdcard/pp_titles.txt
 
+        log "  pp: new message arrived, but no usable code"
         log "  pp: no new code yet"
         sleep "$TO_PP_POLL"
     done
@@ -412,6 +424,64 @@ detect_page() {
     return 2
 }
 
+# Click the native action-bar back button (resource-id). H5 pages such as
+# 外勤申请 intercept KEYCODE_BACK and never exit, so system Back is useless
+# there - only the action-bar button reliably returns to the workbench.
+click_back_actionbar() {
+    dump_ui || return 1
+    local line
+    line=$(cat "$UI_DUMP" | sed 's/<node/\n<node/g' | grep 'btn_back_actionbar' | head -1)
+    if [ -z "$line" ]; then log "  no back actionbar button"; return 1; fi
+    local bounds
+    bounds=$(echo "$line" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
+    [ -z "$bounds" ] && return 1
+    local nums
+    nums=$(echo "$bounds" | sed 's/\]\[/,/g; s/[^0-9,]//g')
+    local cx cy
+    cx=$(( ( $(echo "$nums" | cut -d, -f1) + $(echo "$nums" | cut -d, -f3) ) / 2 ))
+    cy=$(( ( $(echo "$nums" | cut -d, -f2) + $(echo "$nums" | cut -d, -f4) ) / 2 ))
+    input tap "$cx" "$cy"
+    log "  click back actionbar at $cx,$cy"
+    sleep 1
+    return 0
+}
+
+# Verify the attendance page actually loaded (签到/签退 visible).
+# Workbench grid can still be re-laying-out when 考勤打卡 is tapped, so the
+# tap may land on an adjacent card (e.g. 外勤申请). Always confirm landing.
+wait_attendance_page() {
+    local i
+    # Attendance H5 takes 6-9s to render 签到/签退; poll ~30s to be safe.
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        invalidate_dump
+        if text_exists "$T_CHECKIN" || text_exists "$T_CHECKOUT"; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+# Click 考勤打卡 from the workbench and confirm the attendance page loaded.
+# On wrong landing: press BACK to return to workbench and retry once.
+open_attendance_from_workbench() {
+    click_text_wait "$T_ATTENDANCE" 5 || { log "  timeout: $T_ATTENDANCE"; return 1; }
+    if wait_attendance_page; then
+        return 0
+    fi
+    log "  landed on wrong page after $T_ATTENDANCE, going back and retrying"
+    click_back_actionbar || input keyevent KEYCODE_BACK
+    sleep 1
+    invalidate_dump
+    click_text "$T_WORKBENCH" 2>/dev/null; sleep "$TO_PAGE"
+    click_text_wait "$T_ATTENDANCE" 5 || { log "  retry timeout: $T_ATTENDANCE"; return 1; }
+    if wait_attendance_page; then
+        return 0
+    fi
+    log "  attendance page still not loaded after retry"
+    return 1
+}
+
 # Navigate to the attendance page regardless of current state.
 goto_attendance() {
     detect_page
@@ -419,13 +489,23 @@ goto_attendance() {
         0) log "  already on attendance page"; return 0 ;;
         1) log "  on workbench, navigating to attendance"
            click_text "$T_WORKBENCH"; sleep "$TO_PAGE"
-           click_text_wait "$T_ATTENDANCE" 5 || { log "  timeout: $T_ATTENDANCE"; return 1; }
-           return 0 ;;
+           open_attendance_from_workbench ;;
         2) log "  unknown page, trying workbench first"
-           click_text_wait "$T_WORKBENCH" 5 || { log "  timeout: $T_WORKBENCH"; return 1; }
+           if ! click_text_wait "$T_WORKBENCH" 5; then
+               # App relaunch can restore a tab-less H5 page (e.g. 外勤申请,
+               # EnterpriseH5ProcessActivity) where the workbench tab is gone
+               # and KEYCODE_BACK is intercepted. Use the native back button.
+               log "  no workbench tab, clicking native back button"
+               click_back_actionbar; sleep 1
+               invalidate_dump
+               if ! click_text_wait "$T_WORKBENCH" 5; then
+                   click_back_actionbar; sleep 1
+                   invalidate_dump
+                   click_text_wait "$T_WORKBENCH" 5 || { log "  timeout: $T_WORKBENCH after back"; return 1; }
+               fi
+           fi
            sleep "$TO_PAGE"
-           click_text_wait "$T_ATTENDANCE" 5 || { log "  timeout: $T_ATTENDANCE"; return 1; }
-           return 0 ;;
+           open_attendance_from_workbench ;;
     esac
 }
 
@@ -433,13 +513,18 @@ main() {
     log "====== checkin started ======"
     # Clear coordinate cache
     rm -f /sdcard/checkin/.cache_* 2>/dev/null
+    # ColorOS blocks settings/input/activity services while the screen is
+    # asleep. Android 14's power command wakes the display reliably.
+    cmd power wakeup >/dev/null 2>&1 || input keyevent 224 >/dev/null 2>&1
+    sleep 1
     # Save auto-rotation state, then disable it (uiautomator dump tends to turn it on)
     AUTO_ROT=$(settings get system accelerometer_rotation 2>/dev/null)
     lock_rotation
+    # Keep the display awake for the whole flow; H5 loading can take 6-9s.
+    SCREEN_TIMEOUT=$(settings get system screen_off_timeout 2>/dev/null)
+    settings put system screen_off_timeout 600000 2>/dev/null
 
     log "STEP 0: wake screen & launch"
-    # Wake up screen (cron runs while screen is off)
-    input keyevent 224; sleep 1
     # Force-stop app to guarantee fresh initial state
     am force-stop "$APP_PACKAGE"; sleep 1
     input keyevent KEYCODE_HOME; sleep 1
@@ -478,6 +563,14 @@ main() {
         if click_text "$T_CHECKOUT"; then checkin_done=1; break; fi
         if click_text "$T_CHECKIN"; then checkin_done=1; break; fi
         log "  retry checkin ($ci)"
+        # Still no button by mid-loop: we may have landed on a wrong page
+        # (e.g. 外勤申请 from a stale workbench tap). Go back and re-navigate.
+        if [ "$ci" -eq 3 ]; then
+            log "  re-navigating to attendance"
+            click_back_actionbar || input keyevent KEYCODE_BACK
+            sleep 1
+            goto_attendance || { fail "attendance re-nav"; }
+        fi
         sleep 2
     done
     if [ "$checkin_done" -eq 0 ]; then fail "checkin btn"; fi

@@ -29,7 +29,6 @@ T_SIGNIN_SUCCESS="签到成功"
 T_CHECKOUT_SUCCESS="签退成功"
 T_CHECKIN_SUCCESS="打卡成功"
 T_LOC_ERROR="位置信息获取失败"
-T_CONFIRM="确认"
 T_CODE_EXPIRED="短信验证码过期或不存在"
 WECHAT_PKG="com.tencent.mm"
 
@@ -227,13 +226,6 @@ click_cached() {
     log "  click $text at $coords (cached)"
     invalidate_dump
     return 0
-}
-
-dismiss_loc() {
-    if text_exists "$T_LOC_ERROR"; then
-        log "  loc popup"; click_text "$T_CONFIRM"; sleep 1; return 0
-    fi
-    return 1
 }
 
 # Extract verification code from UI dump XML text nodes
@@ -529,6 +521,28 @@ goto_attendance() {
     esac
 }
 
+# A location validation failure means the current check-in attempt failed.
+# Close the attendance H5, explicitly return through the workbench tab, and
+# reopen attendance. The caller continues with a fresh sign-in/checkout tap.
+recover_location_error() {
+    log "  location validation failed; reloading attendance from workbench"
+    shot "location_error"
+
+    click_back_actionbar || input keyevent KEYCODE_BACK
+    sleep 1
+    invalidate_dump
+
+    if ! click_text_wait "$T_WORKBENCH" 5; then
+        click_back_actionbar || input keyevent KEYCODE_BACK
+        sleep 1
+        invalidate_dump
+        click_text_wait "$T_WORKBENCH" 5 || { log "  timeout: workbench after location error"; return 1; }
+    fi
+
+    sleep "$TO_PAGE"
+    open_attendance_from_workbench
+}
+
 main() {
     log "====== checkin started ======"
     # Clear coordinate cache
@@ -572,9 +586,10 @@ main() {
     # page appeared; if not, retry with fresh dump.
     checkin_done=0
     for ci in 1 2 3 4 5 6; do
-        # Check location error popup (needs dump)
+        # A location error invalidates the attempt. Reload attendance from
+        # the workbench, then try the sign-in/checkout button again below.
         if text_exists "$T_LOC_ERROR"; then
-            log "  loc popup"; click_text "$T_CONFIRM"; sleep 1
+            if ! recover_location_error; then fail "location recovery"; fi
         fi
         # Fresh dump for checkin/checkout (WebView may still be loading)
         invalidate_dump
@@ -606,6 +621,19 @@ main() {
 
     log "STEP 3: wait login"
     if ! wait_for_any "$T_GET_CODE" "$T_SMS_LOGIN" "$TO_LOGIN"; then
+        invalidate_dump
+        if text_exists "$T_LOC_ERROR"; then
+            log "  location error appeared after check button"
+            if ! recover_location_error; then fail "location recovery"; fi
+
+            # Continue the full verification flow with a fresh button tap.
+            if ! click_text "$T_CHECKOUT"; then
+                click_text "$T_CHECKIN" || fail "checkin btn after location recovery"
+            fi
+            sleep "$TO_PAGE"
+            invalidate_dump
+        fi
+
         # Login page didn't appear - the click in STEP 2 may have hit a stale
         # WebView element. Retry STEP 2 with a fresh dump.
         log "  login not found, retrying checkin button..."

@@ -513,9 +513,8 @@ main() {
     log "====== checkin started ======"
     # Clear coordinate cache
     rm -f /sdcard/checkin/.cache_* 2>/dev/null
-    # ColorOS blocks settings/input/activity services while the screen is
-    # asleep. Android 14's power command wakes the display reliably.
-    cmd power wakeup >/dev/null 2>&1 || input keyevent 224 >/dev/null 2>&1
+    # Wake up screen (cron runs while screen is off)
+    input keyevent 224 >/dev/null 2>&1
     sleep 1
     # Save auto-rotation state, then disable it (uiautomator dump tends to turn it on)
     AUTO_ROT=$(settings get system accelerometer_rotation 2>/dev/null)

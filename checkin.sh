@@ -25,6 +25,9 @@ T_VIEW_DETAIL="查看详情"
 T_TRUSTED_AUTH="可信认证"
 T_TRUSTED_AUTH_PLATFORM="可信认证平台"
 T_CANCEL="取消"
+T_SIGNIN_SUCCESS="签到成功"
+T_CHECKOUT_SUCCESS="签退成功"
+T_CHECKIN_SUCCESS="打卡成功"
 T_LOC_ERROR="位置信息获取失败"
 T_CONFIRM="确认"
 T_CODE_EXPIRED="短信验证码过期或不存在"
@@ -395,9 +398,51 @@ check_trusted() {
        input tap $COORD_CANCEL; sleep 1
        # click back button at top-left to dismiss residual page
        input tap $COORD_TRUST_BACK; sleep "$TO_PAGE"
-       input tap $COORD_TRUST_BACK; sleep "$TO_PAGE"
        shot "trusted_after_back"; return 0
     fi
+    return 1
+}
+
+checkin_success_exists() {
+    text_exists "$T_CHECKIN_SUCCESS" || text_exists "$T_SIGNIN_SUCCESS" || text_exists "$T_CHECKOUT_SUCCESS"
+}
+
+# After trusted auth, the number of back taps is variable. Poll fresh dumps
+# until the success popup appears; only tap the residual page's back button
+# when the success popup has not appeared yet.
+handle_trusted() {
+    log "  checking trusted auth..."
+    trusted_seen=0
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        invalidate_dump
+        if checkin_success_exists; then
+            log "  checkin success popup detected"
+            shot "trusted_success"
+            return 0
+        fi
+
+        if text_exists "$T_TRUSTED_AUTH" || text_exists "$T_TRUSTED_AUTH_PLATFORM"; then
+            trusted_seen=1
+            log "  trusted auth detected (poll $i)"
+            shot "trusted"
+            input tap $COORD_CANCEL
+            sleep 1
+            continue
+        fi
+
+        if [ "$trusted_seen" -eq 1 ]; then
+            # Prefer the native action-bar back control when it is exposed.
+            # Fall back to the calibrated top-left coordinate only while the
+            # success popup is still missing.
+            if ! click_back_actionbar; then
+                input tap $COORD_TRUST_BACK
+            fi
+            sleep 1
+        fi
+
+        sleep 1
+    done
+    log "  no success popup after trusted handling"
     return 1
 }
 
@@ -752,6 +797,9 @@ main() {
     log "STEP 11: check result"
     dump_ui; shot "result"
     if text_exists "$T_CODE_EXPIRED"; then fail "code expired"; fi
+    if checkin_success_exists; then
+        log "success"; log "====== checkin success ======"; exit 0
+    fi
     if ! text_exists "$T_SMS_LOGIN"; then
         log "success"; log "====== checkin success ======"; exit 0
     fi

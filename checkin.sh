@@ -44,8 +44,7 @@ TO_PUSHPLUS_DELAY=8
 TO_WX_LOAD=2
 
 # UI coordinates calibrated on device (1080x2376)
-COORD_CANCEL="520 1830"       # 可信认证 取消 button
-COORD_TRUST_BACK="86 203"     # back button after dismissing trusted-auth popup
+COORD_TRUST_BACK="86 203"     # 可信认证 左上角返回按钮
 
 # pushplus polling interval (seconds between API calls)
 TO_PP_POLL=5
@@ -374,30 +373,10 @@ get_code() {
     return 1
 }
 
-handle_trusted() {
-    log "  checking trusted auth..."
-    for i in 1 2 3 4 5 6; do
-        if text_exists "$T_TRUSTED_AUTH" || text_exists "$T_TRUSTED_AUTH_PLATFORM"; then
-            log "  trusted auth!"; shot "trusted"
-            input tap $COORD_CANCEL; sleep 1
-           shot "trusted_after_cancel"; sleep "$TO_PAGE"
-           # click back button at top-left to dismiss residual page
-           input tap $COORD_TRUST_BACK; sleep "$TO_PAGE"
-           input tap $COORD_TRUST_BACK; sleep "$TO_PAGE"
-           shot "trusted_after_back"; return 0
-        fi
-        invalidate_dump
-        sleep 2
-    done
-    log "  no trusted auth"; return 1
-}
-
 check_trusted() {
     if text_exists "$T_TRUSTED_AUTH" || text_exists "$T_TRUSTED_AUTH_PLATFORM"; then
-        log "  trusted auth popup!"; shot "trusted_popup"
-       input tap $COORD_CANCEL; sleep 1
-       # click back button at top-left to dismiss residual page
-       input tap $COORD_TRUST_BACK; sleep "$TO_PAGE"
+       log "  trusted auth popup!"; shot "trusted_popup"
+       input tap $COORD_TRUST_BACK; sleep 1
        shot "trusted_after_back"; return 0
     fi
     return 1
@@ -425,18 +404,14 @@ handle_trusted() {
             trusted_seen=1
             log "  trusted auth detected (poll $i)"
             shot "trusted"
-            input tap $COORD_CANCEL
+            input tap $COORD_TRUST_BACK
             sleep 1
             continue
         fi
 
         if [ "$trusted_seen" -eq 1 ]; then
-            # Prefer the native action-bar back control when it is exposed.
-            # Fall back to the calibrated top-left coordinate only while the
-            # success popup is still missing.
-            if ! click_back_actionbar; then
-                input tap $COORD_TRUST_BACK
-            fi
+            # 统一使用左上角返回，不再点弹窗底部的取消按钮。
+            input tap $COORD_TRUST_BACK
             sleep 1
         fi
 

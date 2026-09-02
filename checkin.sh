@@ -574,7 +574,19 @@ main() {
     if ! goto_attendance; then
         input swipe 540 1800 540 600 500; sleep 1
         invalidate_dump
-        if ! goto_attendance; then fail "attendance"; fi
+    fi
+    if ! goto_attendance; then
+        # Workbench H5 can fail with "获取移动办公工作台令牌失败" when the
+        # app session/token is not ready. Do not open the H5 directly; restart
+        # the app so it rebuilds the token, then use the workbench entry again.
+        log "  attendance failed, restarting app for fresh workbench token"
+        am force-stop "$APP_PACKAGE"; sleep 2
+        input keyevent KEYCODE_HOME; sleep 1
+        am start -n "$APP_PACKAGE/com.cmic.module_main.ui.activity.WelcomeActivity" 2>/dev/null
+        sleep "$TO_LAUNCH"
+        invalidate_dump
+        check_trusted
+        goto_attendance || fail "attendance after app restart"
     fi
     sleep "$TO_PAGE"
     invalidate_dump

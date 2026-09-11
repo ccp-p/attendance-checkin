@@ -822,42 +822,22 @@ main() {
     fi
 
     log "STEP 6: request code"
-    # Hard gate: only a visible countdown proves the code was requested.
-    # Loading animations frequently break a single dump, so poll each click
-    # with several dumps before declaring the click ineffective.
-    code_requested=0
-    for attempt in 1 2 3; do
-        if [ "$attempt" -eq 2 ]; then
-            log "  countdown not confirmed, retrying click (fallback coord)"
-        elif [ "$attempt" -eq 3 ]; then
-            log "  countdown still not confirmed, last click attempt"
-        fi
-        invalidate_dump
-        tap_screen_button 870 1303 "$T_GET_CODE" || true
-        if [ "$attempt" -eq 2 ]; then
-            input tap 870 1207
-            log "  tap fallback 870,1207"
-        fi
-        for poll in 1 2 3; do
-            sleep 2
-            invalidate_dump
-            dump_ui 2>/dev/null
-            if cat "$UI_DUMP" 2>/dev/null | grep -qE '[0-9]+s'; then
-                code_requested=1
-                log "  code requested, countdown detected (attempt $attempt poll $poll)"
-                break
-            fi
-        done
-        if [ "$code_requested" -eq 1 ]; then break; fi
-    done
-    if [ "$code_requested" -ne 1 ]; then
-        log "  code request FAILED: no countdown after 3 clicks, not submitting blindly"
-        restart_flow "no countdown after clicks" || fail "code request: no countdown after restarts"
-    fi
+    # The SMS arriving via pushplus is the only success signal we need.
+    # Dump-based countdown checks are unreliable here (receive-SMS
+    # animations break uiautomator) and each retry costs ~30s, so we
+    # tap once and let STEP 7 wait for the code.
+    invalidate_dump
+    tap_screen_button 870 1303 "$T_GET_CODE" || input tap 870 1303
+    log "  get-code tapped; success signal = pushplus SMS (STEP 7)"
 
     log "STEP 7: get code via pushplus"
     code=$(get_code)
-    if [ -z "$code" ]; then fail "no code"; fi
+    if [ -z "$code" ]; then
+        log "  no SMS in first window, tap fallback coord and wait once more"
+        input tap 870 1207
+        code=$(get_code)
+        [ -z "$code" ] && fail "no code after fallback tap"
+    fi
     log "  got code: $code"
 
     log "STEP 8: input code"

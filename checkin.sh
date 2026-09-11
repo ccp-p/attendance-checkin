@@ -846,29 +846,12 @@ main() {
     code=$(echo "$code" | grep -oE '[0-9]{4,8}' | head -1)
     log "  code: $code"
 
-    # Single dump: find EditText + submit button coords at once
-    invalidate_dump
-    dump_ui 2>/dev/null
-
-    # Find EditText
-    et=$(cat "$UI_DUMP" 2>/dev/null | sed 's/<node/\n<node/g' | grep "EditText" | head -1)
-    if [ -n "$et" ]; then
-        eb=$(echo "$et" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
-        if [ -n "$eb" ]; then
-            en=$(echo "$eb" | sed 's/\]\[/,/g; s/[^0-9,]//g')
-            ex1=$(echo "$en" | cut -d, -f1); ey1=$(echo "$en" | cut -d, -f2)
-            ex2=$(echo "$en" | cut -d, -f3); ey2=$(echo "$en" | cut -d, -f4)
-            cx=$(( (ex1 + ex2) / 2 )); cy=$(( (ey1 + ey2) / 2 ))
-            log "  tap EditText at $cx,$cy"
-            input tap "$cx" "$cy"
-        else
-            log "  EditText no bounds, tap 496,1306"
-            input tap 496 1306
-        fi
-    else
-        log "  EditText not found, tap 496,1306"
-        input tap 496 1306
-    fi
+    # Blind-tap the code input row (stable coord, same row as the
+    # EditText seen in dumps: 424..496,1306). Focus correctness is
+    # verified by the hard gate below; dump-hunting here just burns
+    # ~30s whenever the page is animating.
+    log "  blind-tap EditText at 496,1306"
+    input tap 496 1306
     sleep 0.5
 
     # Type the code

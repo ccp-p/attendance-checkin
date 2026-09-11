@@ -822,13 +822,14 @@ main() {
     fi
 
     log "STEP 6: request code"
-    # The SMS arriving via pushplus is the only success signal we need.
-    # Dump-based countdown checks are unreliable here (receive-SMS
-    # animations break uiautomator) and each retry costs ~30s, so we
-    # tap once and let STEP 7 wait for the code.
+    # The SMS arriving via pushplus is the only success signal we need,
+    # so we blind-tap the stable coord instead of dump-hunting the
+    # button: login-page animations break dumps and each retry costs
+    # ~30s. If the tap missed, STEP 7 times out and the fallback coord
+    # gets a second chance.
     invalidate_dump
-    tap_screen_button 870 1303 "$T_GET_CODE" || input tap 870 1303
-    log "  get-code tapped; success signal = pushplus SMS (STEP 7)"
+    input tap 870 1303
+    log "  get-code blind-tapped (870,1303); success signal = pushplus SMS (STEP 7)"
 
     log "STEP 7: get code via pushplus"
     code=$(get_code)

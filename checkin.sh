@@ -8,6 +8,7 @@ DIR="/sdcard/checkin"
 LOG_FILE="$DIR/checkin.log"
 SHOT_DIR="$DIR/screenshots"
 UI_DUMP="/sdcard/ui_dump.xml"
+RUN_LOCK="$DIR/.running"
 
 # pushplus API credentials for verification code retrieval
 PP_TOKEN="821c4bffa77242268d9664c3e3a24cce"
@@ -44,6 +45,9 @@ TO_WX_LOAD=2
 
 # UI coordinates calibrated on device (1080x2376)
 COORD_TRUST_BACK="86 203"     # 可信认证 左上角返回按钮
+COORD_WORKBENCH_TAB="324 2295"
+COORD_ATTENDANCE_CARD="675 1640"
+COORD_ATTENDANCE_BUTTON="540 1300"
 
 # pushplus polling interval (seconds between API calls)
 TO_PP_POLL=5
@@ -54,7 +58,21 @@ PP_LIST_BODY="/sdcard/pp_list.json"
 PP_RESP="/sdcard/pp_resp.json"
 
 mkdir -p "$DIR" "$SHOT_DIR"
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE" >&2; }
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"; }
+
+# ColorOS can turn concurrent UI commands into failed binder transactions
+# (am/settings/input all report Failed transaction). Make checkin single-run.
+if [ -d "$RUN_LOCK" ]; then
+    OLD_PID=$(cat "$RUN_LOCK/pid" 2>/dev/null)
+    if [ -n "$OLD_PID" ] && ! kill -0 "$OLD_PID" 2>/dev/null; then
+        rm -rf "$RUN_LOCK"
+    fi
+fi
+if ! mkdir "$RUN_LOCK" 2>/dev/null; then
+    log "another checkin process is already running; aborting"
+    exit 1
+fi
+echo $$ > "$RUN_LOCK/pid"
 
 # Auto-rotation state saved on entry, restored on exit
 AUTO_ROT=""
@@ -72,7 +90,7 @@ restore_device_state() {
         settings put system screen_off_timeout "$SCREEN_TIMEOUT" 2>/dev/null
     fi
 }
-trap restore_device_state EXIT
+trap 'restore_device_state; rm -rf "$RUN_LOCK" 2>/dev/null' EXIT
 
 lock_rotation() {
     settings put system accelerometer_rotation 0 2>/dev/null
@@ -378,12 +396,16 @@ checkin_success_exists() {
     text_exists "$T_CHECKIN_SUCCESS" || text_exists "$T_SIGNIN_SUCCESS" || text_exists "$T_CHECKOUT_SUCCESS"
 }
 
-# After trusted auth, the number of back taps is variable. Poll fresh dumps
-# until the success popup appears; only tap the residual page's back button
-# when the success popup has not appeared yet.
+trusted_visible() {
+    text_exists "$T_TRUSTED_AUTH" || text_exists "$T_TRUSTED_AUTH_PLATFORM"
+}
+
+# After trusted auth, one back may go straight to the result screen. Poll the
+# fresh dump first; never send a blind second back when trusted UI is gone.
 handle_trusted() {
     log "  checking trusted auth..."
     trusted_seen=0
+    trusted_back_count=0
     for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
         invalidate_dump
         if checkin_success_exists; then
@@ -392,19 +414,30 @@ handle_trusted() {
             return 0
         fi
 
-        if text_exists "$T_TRUSTED_AUTH" || text_exists "$T_TRUSTED_AUTH_PLATFORM"; then
+        if trusted_visible; then
             trusted_seen=1
             log "  trusted auth detected (poll $i)"
             shot "trusted"
             input tap $COORD_TRUST_BACK
+            trusted_back_count=$((trusted_back_count + 1))
             sleep 1
             continue
         fi
 
         if [ "$trusted_seen" -eq 1 ]; then
-            # 统一使用左上角返回，不再点弹窗底部的取消按钮。
-            input tap $COORD_TRUST_BACK
+            if [ "$trusted_back_count" -eq 0 ]; then
+                # Safety net: dump may briefly miss the trusted page.
+                input tap $COORD_TRUST_BACK
+                trusted_back_count=1
+                sleep 1
+                continue
+            fi
+
+            # Trusted page is gone after the first back. Wait for the result
+            # popup instead of clicking back again and leaving the flow.
+            log "  trusted page gone after back; waiting for result"
             sleep 1
+            continue
         fi
 
         sleep 1
@@ -416,6 +449,28 @@ handle_trusted() {
 print_screen() {
     dump_ui || return 1
     cat "$UI_DUMP" | sed 's/<node/\n<node/g' | grep -o 'text="[^"]*"' | sed 's/text="//;s/"//' | grep -v '^$' | head -20 >> "$LOG_FILE"
+}
+
+# Restart the flow from scratch when the current attempt has gone wrong.
+# The flow runs via rish (Shizuku adb shell), so am/settings/input keep
+# working after the exec handover to the fresh copy.
+restart_flow() {
+    RETRY_COUNT="${RETRY_COUNT:-0}"
+    if [ "$RETRY_COUNT" -lt 2 ]; then
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        export RETRY_COUNT
+        log "  restart flow (attempt $RETRY_COUNT/2): $1"
+        am force-stop "$APP_PACKAGE" >/dev/null 2>&1; sleep 2
+        input keyevent KEYCODE_HOME >/dev/null 2>&1; sleep 1
+        # Probe the workbench explicitly so the post-restart log shows what
+        # the fresh launch actually renders (diagnoses silent stuck loops).
+        invalidate_dump
+        dump_ui >/dev/null 2>&1
+        log "  post-restart dump: workbench=$(grep -q "$T_WORKBENCH" "$UI_DUMP" 2>/dev/null && echo yes || echo no) attendance=$(grep -q "$T_ATTENDANCE" "$UI_DUMP" 2>/dev/null && echo yes || echo no)"
+        exec "$0" "$@"
+    fi
+    log "  max flow restarts reached"
+    return 1
 }
 
 fail() {
@@ -461,12 +516,60 @@ click_back_actionbar() {
 # Verify the attendance page actually loaded (签到/签退 visible).
 # Workbench grid can still be re-laying-out when 考勤打卡 is tapped, so the
 # tap may land on an adjacent card (e.g. 外勤申请). Always confirm landing.
+attendance_title_exists() {
+    dump_ui || return 1
+    grep 'tv_title_actionbar' "$UI_DUMP" 2>/dev/null | grep -q "$T_ATTENDANCE"
+}
+
+# The attendance H5 can swallow one input event even though it exits 0.
+# Alternate tap/swipe touches and require the login page before returning.
+tap_attendance_button() {
+    local i
+    for i in 1 2 3 4 5 6; do
+        case "$i" in
+            1|3|5) input tap $COORD_ATTENDANCE_BUTTON ;;
+            2|4|6) input swipe $COORD_ATTENDANCE_BUTTON $COORD_ATTENDANCE_BUTTON 200 ;;
+        esac
+        sleep 2
+        if wait_for_any "$T_GET_CODE" "$T_SMS_LOGIN" 8; then
+            log "  login page appeared after attendance-button touch $i"
+            return 0
+        fi
+        invalidate_dump
+    done
+    log "  attendance button did not open login page"
+    return 1
+}
+
+# Generic ColorOS/WebView touch retry for a fixed H5 button. It only returns
+# after the requested H5 state is visible in a fresh dump.
+tap_screen_button() {
+    local x="$1" y="$2" success_text="$3"
+    local i
+    for i in 1 2 3 4 5 6; do
+        case "$i" in
+            1|3|5) input tap "$x" "$y" ;;
+            2|4|6) input swipe "$x" "$y" "$x" "$y" 200 ;;
+        esac
+        sleep 2
+        if wait_for_text "$success_text" 8; then
+            log "  touched button at $x,$y (attempt $i), $success_text visible"
+            return 0
+        fi
+        invalidate_dump
+    done
+    log "  button touch did not make $success_text visible"
+    return 1
+}
+
 wait_attendance_page() {
     local i
     # Attendance H5 takes 6-9s to render 签到/签退; poll ~30s to be safe.
     for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
         invalidate_dump
-        if text_exists "$T_CHECKIN" || text_exists "$T_CHECKOUT"; then
+        # ColorOS/WebView sometimes hides the H5 button from a fresh dump.
+        # The native action-bar title is still reliable after the card opens.
+        if text_exists "$T_CHECKIN" || text_exists "$T_CHECKOUT" || attendance_title_exists; then
             return 0
         fi
         sleep 1
@@ -521,6 +624,32 @@ goto_attendance() {
     esac
 }
 
+# Launch animation / "接收中..." can keep uiautomator dump from reaching idle.
+# Use calibrated fixed coordinates for the first workbench/card tap only.
+# Always verify the attendance page afterwards; a stale or shifted workbench
+# can otherwise send the blind attendance-button tap to 外勤申请.
+open_attendance_fixed() {
+    log "  fixed navigation: workbench tab + attendance card"
+    input tap $COORD_WORKBENCH_TAB
+    sleep 2
+    input tap $COORD_ATTENDANCE_CARD
+    sleep 8
+
+    if wait_attendance_page; then
+        log "  attendance page verified after fixed navigation"
+        return 0
+    fi
+
+    log "  fixed navigation failed; recovering via workbench texts"
+    goto_attendance || return 1
+    if wait_attendance_page; then
+        log "  attendance page verified after text recovery"
+        return 0
+    fi
+
+    return 1
+}
+
 # A location validation failure means the current check-in attempt failed.
 # Close the attendance H5, explicitly return through the workbench tab, and
 # reopen attendance. The caller continues with a fresh sign-in/checkout tap.
@@ -567,27 +696,9 @@ main() {
     # in dumpsys window RotationLockHistory)
     am start -n "$APP_PACKAGE/com.cmic.module_main.ui.activity.WelcomeActivity" 2>/dev/null
     sleep "$TO_LAUNCH"
-    invalidate_dump
-    check_trusted
 
     log "STEP 1: navigate to attendance"
-    if ! goto_attendance; then
-        input swipe 540 1800 540 600 500; sleep 1
-        invalidate_dump
-    fi
-    if ! goto_attendance; then
-        # Workbench H5 can fail with "获取移动办公工作台令牌失败" when the
-        # app session/token is not ready. Do not open the H5 directly; restart
-        # the app so it rebuilds the token, then use the workbench entry again.
-        log "  attendance failed, restarting app for fresh workbench token"
-        am force-stop "$APP_PACKAGE"; sleep 2
-        input keyevent KEYCODE_HOME; sleep 1
-        am start -n "$APP_PACKAGE/com.cmic.module_main.ui.activity.WelcomeActivity" 2>/dev/null
-        sleep "$TO_LAUNCH"
-        invalidate_dump
-        check_trusted
-        goto_attendance || fail "attendance after app restart"
-    fi
+    open_attendance_fixed || fail "fixed navigation"
     sleep "$TO_PAGE"
     invalidate_dump
 
@@ -605,18 +716,23 @@ main() {
         fi
         # Fresh dump for checkin/checkout (WebView may still be loading)
         invalidate_dump
-        # Try both: whichever exists on page is the correct one
-        if click_text "$T_CHECKOUT"; then checkin_done=1; break; fi
-        if click_text "$T_CHECKIN"; then checkin_done=1; break; fi
-        log "  retry checkin ($ci)"
-        # Still no button by mid-loop: we may have landed on a wrong page
-        # (e.g. 外勤申请 from a stale workbench tap). Go back and re-navigate.
-        if [ "$ci" -eq 3 ]; then
-            log "  re-navigating to attendance"
-            click_back_actionbar || input keyevent KEYCODE_BACK
-            sleep 1
-            goto_attendance || { fail "attendance re-nav"; }
+        # The H5 button can be missing from a WebView dump even while the
+        # native title confirms we are on the attendance page. Only now is
+        # the calibrated button safe; without the title we must re-navigate.
+        if text_exists "$T_CHECKOUT" || text_exists "$T_CHECKIN" || attendance_title_exists; then
+            log "  attendance page title confirmed, H5 button hidden in dump"
+            if tap_attendance_button; then
+                checkin_done=1
+                break
+            fi
         fi
+
+        log "  retry checkin ($ci)"
+        # Never keep waiting on a wrong page (e.g. 外勤申请). Re-navigate
+        # before every retry; goto_attendance handles both wrong H5 pages and
+        # the normal workbench state.
+        log "  re-navigating to attendance"
+        goto_attendance || { fail "attendance re-nav"; }
         sleep 2
     done
     if [ "$checkin_done" -eq 0 ]; then fail "checkin btn"; fi
@@ -662,8 +778,7 @@ main() {
     dump_ui 2>/dev/null
     if ! grep -q "$T_GET_CODE" "$UI_DUMP" 2>/dev/null; then
         log "  clicking sms login to activate input mode"
-        click_text "$T_SMS_LOGIN" || fail "sms login"
-        wait_for_text "$T_GET_CODE" 10 || log "  get code not found"
+        tap_screen_button 540 1401 "$T_GET_CODE" || fail "sms login"
     fi
     sleep 1
 
@@ -707,28 +822,37 @@ main() {
     fi
 
     log "STEP 6: request code"
-    # Fresh dump - page layout may have shifted after entering phone digits
-    invalidate_dump
-    if ! click_text "$T_GET_CODE"; then click_xy 870 1207; fi
-
-    # Verify button was actually clicked (countdown timer appears)
-    sleep 2
-    invalidate_dump
-    dump_ui 2>/dev/null
-    if cat "$UI_DUMP" 2>/dev/null | grep -qE '[0-9]+s'; then
-        log "  code requested, countdown detected"
-    else
-        log "  WARNING: countdown not found, retrying click"
-        # Try known coords as fallback
-        input tap 870 1207
-        sleep 2
-        invalidate_dump
-        dump_ui 2>/dev/null
-        if cat "$UI_DUMP" 2>/dev/null | grep -qE '[0-9]+s'; then
-            log "  code requested on retry, countdown detected"
-        else
-            log "  WARNING: no countdown after retry"
+    # Hard gate: only a visible countdown proves the code was requested.
+    # Loading animations frequently break a single dump, so poll each click
+    # with several dumps before declaring the click ineffective.
+    code_requested=0
+    for attempt in 1 2 3; do
+        if [ "$attempt" -eq 2 ]; then
+            log "  countdown not confirmed, retrying click (fallback coord)"
+        elif [ "$attempt" -eq 3 ]; then
+            log "  countdown still not confirmed, last click attempt"
         fi
+        invalidate_dump
+        tap_screen_button 870 1303 "$T_GET_CODE" || true
+        if [ "$attempt" -eq 2 ]; then
+            input tap 870 1207
+            log "  tap fallback 870,1207"
+        fi
+        for poll in 1 2 3; do
+            sleep 2
+            invalidate_dump
+            dump_ui 2>/dev/null
+            if cat "$UI_DUMP" 2>/dev/null | grep -qE '[0-9]+s'; then
+                code_requested=1
+                log "  code requested, countdown detected (attempt $attempt poll $poll)"
+                break
+            fi
+        done
+        if [ "$code_requested" -eq 1 ]; then break; fi
+    done
+    if [ "$code_requested" -ne 1 ]; then
+        log "  code request FAILED: no countdown after 3 clicks, not submitting blindly"
+        restart_flow "no countdown after clicks" || fail "code request: no countdown after restarts"
     fi
 
     log "STEP 7: get code via pushplus"
@@ -775,13 +899,23 @@ main() {
     input keyevent 4
     sleep 1
 
-    # Single dump: verify code entered + find submit button
-    invalidate_dump
-    dump_ui 2>/dev/null
-    if grep -q "$code" "$UI_DUMP" 2>/dev/null; then
-        log "  code verified in EditText"
-    else
-        log "  WARNING: code not in dump"
+    # Hard gate: the code must be confirmed inside the EditText before
+    # submitting. This morning's failure came from tapping submit while the
+    # code had not landed (dump fail -> "code not in dump" -> submit anyway).
+    code_verified=0
+    for poll in 1 2 3; do
+        invalidate_dump
+        dump_ui 2>/dev/null
+        if grep -q "$code" "$UI_DUMP" 2>/dev/null; then
+            code_verified=1
+            log "  code verified in EditText (poll $poll)"
+            break
+        fi
+        sleep 1
+    done
+    if [ "$code_verified" -ne 1 ]; then
+        log "  code input FAILED: code never confirmed in EditText, not submitting blindly"
+        restart_flow "code not verified in EditText" || fail "code input: never verified after restarts"
     fi
 
     log "STEP 9: submit"
@@ -819,17 +953,10 @@ main() {
         log "success"; log "====== checkin success ======"; exit 0
     fi
 
-    # No success detected after trusted auth - kill app and retry from scratch
-    RETRY_COUNT="${RETRY_COUNT:-0}"
-    if [ "$RETRY_COUNT" -lt 2 ]; then
-        RETRY_COUNT=$((RETRY_COUNT + 1))
-        export RETRY_COUNT
-        log "  no success popup, killing app and retrying (attempt $RETRY_COUNT/2)"
-        am force-stop "$APP_PACKAGE"; sleep 2
-        input keyevent KEYCODE_HOME; sleep 1
-        exec "$0" "$@"
+    # No success detected after trusted auth - restart the whole flow
+    if ! restart_flow "no success popup after trusted auth"; then
+        log "====== uncertain (max retries reached) ======"; exit 0
     fi
-    log "====== uncertain (max retries reached) ======"; exit 0
 }
 
 main "$@"

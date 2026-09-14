@@ -846,39 +846,39 @@ main() {
     code=$(echo "$code" | grep -oE '[0-9]{4,8}' | head -1)
     log "  code: $code"
 
-    # Blind-tap the code input row (stable coord, same row as the
-    # EditText seen in dumps: 424..496,1306). Focus correctness is
-    # verified by the hard gate below; dump-hunting here just burns
-    # ~30s whenever the page is animating.
-    log "  blind-tap EditText at 496,1306"
-    input tap 496 1306
-    sleep 0.5
-
-    # Type the code
-    input text "$code"
-    log "  input text: $code"
-
-    # Dismiss keyboard - it covers the submit button
-    log "  hiding keyboard"
-    input keyevent 4
-    sleep 1
-
-    # Hard gate: the code must be confirmed inside the EditText before
-    # submitting. This morning's failure came from tapping submit while the
-    # code had not landed (dump fail -> "code not in dump" -> submit anyway).
     code_verified=0
-    for poll in 1 2 3; do
-        invalidate_dump
-        dump_ui 2>/dev/null
-        if grep -q "$code" "$UI_DUMP" 2>/dev/null; then
-            code_verified=1
-            log "  code verified in EditText (poll $poll)"
-            break
-        fi
+    for attempt in 1 2 3; do
+        # Blind-tap the code input row (stable coord, same row as the
+        # EditText seen in dumps: 424..496,1306). The hard gate below
+        # verifies the code actually landed; if not (mis-tap, animation),
+        # retry in place instead of restarting the app, which cost 8
+        # minutes on the 2026-09-14 morning run.
+        input tap 496 1306
+        sleep 0.5
+        input text "$code"
+        log "  input text: $code (try $attempt)"
+        input keyevent 4
+        sleep 1
+        for poll in 1 2 3 4; do
+            invalidate_dump
+            dump_ui 2>/dev/null
+            if grep -q "$code" "$UI_DUMP" 2>/dev/null; then
+                code_verified=1
+                log "  code verified in EditText (try $attempt poll $poll)"
+                break
+            fi
+            sleep 1
+        done
+        [ "$code_verified" -eq 1 ] && break
+        log "  code not confirmed (try $attempt), re-tap, clear, re-type"
+        input tap 496 1306
+        sleep 0.5
+        for d in 1 2 3 4 5 6 7 8 9 10 11 12; do input keyevent 67; done
+        input keyevent 4
         sleep 1
     done
     if [ "$code_verified" -ne 1 ]; then
-        log "  code input FAILED: code never confirmed in EditText, not submitting blindly"
+        log "  code input FAILED: never confirmed after in-place retries, not submitting blindly"
         restart_flow "code not verified in EditText" || fail "code input: never verified after restarts"
     fi
 

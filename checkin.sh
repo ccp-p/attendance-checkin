@@ -846,62 +846,25 @@ main() {
     code=$(echo "$code" | grep -oE '[0-9]{4,8}' | head -1)
     log "  code: $code"
 
-    code_verified=0
-    for attempt in 1 2 3; do
-        # Blind-tap the code input row (stable coord, same row as the
-        # EditText seen in dumps: 424..496,1306). The hard gate below
-        # verifies the code actually landed; if not (mis-tap, animation),
-        # retry in place instead of restarting the app, which cost 8
-        # minutes on the 2026-09-14 morning run.
-        input tap 496 1306
-        sleep 0.5
-        input text "$code"
-        log "  input text: $code (try $attempt)"
-        input keyevent 4
-        sleep 1
-        for poll in 1 2 3 4; do
-            invalidate_dump
-            dump_ui 2>/dev/null
-            if grep -q "$code" "$UI_DUMP" 2>/dev/null; then
-                code_verified=1
-                log "  code verified in EditText (try $attempt poll $poll)"
-                break
-            fi
-            sleep 1
-        done
-        [ "$code_verified" -eq 1 ] && break
-        log "  code not confirmed (try $attempt), re-tap, clear, re-type"
-        input tap 496 1306
-        sleep 0.5
-        for d in 1 2 3 4 5 6 7 8 9 10 11 12; do input keyevent 67; done
-        input keyevent 4
-        sleep 1
-    done
-    if [ "$code_verified" -ne 1 ]; then
-        log "  code input FAILED: never confirmed after in-place retries, not submitting blindly"
-        restart_flow "code not verified in EditText" || fail "code input: never verified after restarts"
-    fi
+    # Blind-tap the code input row (stable coord, same row as the
+    # EditText seen in dumps: 424..496,1306). No dump verification here:
+    # after requesting a code the page runs a 59s countdown and dumps
+    # stay broken for its whole duration (2026-09-16 morning: verify
+    # polls delayed submit by a minute). Outcome is judged by the
+    # checkin success popup in STEP 10; a mis-tap fails there and the
+    # flow restarts, which is still faster than dump-waiting.
+    input tap 496 1306
+    sleep 0.5
+    input text "$code"
+    log "  input text: $code (blind)"
+    input keyevent 4
+    sleep 1
 
     log "STEP 9: submit"
-    # Use cached dump to find submit button (no extra dump)
-    submit_line=$(cat "$UI_DUMP" 2>/dev/null | sed 's/<node/\n<node/g' | grep "text=\"$T_SMS_LOGIN\"" | head -1)
-    if [ -n "$submit_line" ]; then
-        sb=$(echo "$submit_line" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -1)
-        if [ -n "$sb" ]; then
-            sn=$(echo "$sb" | sed 's/\]\[/,/g; s/[^0-9,]//g')
-            sx1=$(echo "$sn" | cut -d, -f1); sy1=$(echo "$sn" | cut -d, -f2)
-            sx2=$(echo "$sn" | cut -d, -f3); sy2=$(echo "$sn" | cut -d, -f4)
-            scx=$(( (sx1 + sx2) / 2 )); scy=$(( (sy1 + sy2) / 2 ))
-            input tap "$scx" "$scy"
-            log "  clicked submit at $scx,$scy"
-        else
-            input tap 540 1536
-            log "  submit no bounds, tap 540,1536"
-        fi
-    else
-        input tap 540 1536
-        log "  submit not found, tap 540,1536"
-    fi
+    # Blind-tap submit: dump-free, same reasoning as STEP 8. The
+    # trusted-auth success popup in STEP 10 is the verdict.
+    input tap 540 1536
+    log "  blind-tapped submit (540,1536)"
     sleep 1
 
     log "STEP 10: trusted auth"

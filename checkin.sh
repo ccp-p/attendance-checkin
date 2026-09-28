@@ -301,6 +301,10 @@ extract_code_from_text() {
 # Polls message list for new messages (by shortCode) and extracts
 # the 6-digit code from SMS content titles.
 get_code() {
+    # Optional arg: coord to re-tap mid-poll when no SMS shows up,
+    # e.g. "870 1303". Re-tapping a working countdown button is a no-op,
+    # but recovers a missed first tap without waiting for the fallback.
+    local rc_coord="${1:-870 1303}"
     local dl=$(( $(date +%s) + TO_CODE ))
     local code=""
 
@@ -351,6 +355,10 @@ get_code() {
             if [ $i -eq 1 ] || [ $((i % 6)) -eq 0 ]; then
                 latest_time=$(echo "$resp" | grep -o '"updateTime":"[^"]*"' | head -1 | sed 's/"updateTime":"//;s/"//')
                 log "  pp: waiting (latest PushPlus: ${latest_time:-unknown})"
+            fi
+            if [ $((i % 5)) -eq 0 ]; then
+                log "  pp: no SMS yet, re-tapping get-code ($rc_coord)"
+                input tap $rc_coord
             fi
             sleep "$TO_PP_POLL"
             continue
@@ -832,11 +840,11 @@ main() {
     log "  get-code blind-tapped (870,1303); success signal = pushplus SMS (STEP 7)"
 
     log "STEP 7: get code via pushplus"
-    code=$(get_code)
+    code=$(get_code "870 1303")
     if [ -z "$code" ]; then
         log "  no SMS in first window, tap fallback coord and wait once more"
         input tap 870 1207
-        code=$(get_code)
+        code=$(get_code "870 1207")
         [ -z "$code" ] && fail "no code after fallback tap"
     fi
     log "  got code: $code"

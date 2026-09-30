@@ -1,4 +1,4 @@
-﻿#!/system/bin/sh
+#!/system/bin/sh
 # Standalone test: poll pushplus for new verification code.
 # Usage: sh /sdcard/test_getcode.sh
 # Run AFTER clicking "获取验证码" on the phone.
@@ -20,7 +20,7 @@ if [ -z "$access_key" ]; then echo "FAILED: no access key"; exit 1; fi
 echo "OK: access_key=$access_key"
 
 echo "=== STEP 2: Record baseline shortCode ==="
-latest_sc=$(curl -s --max-time 10 -X POST "$PP_API_BASE/api/open/message/list" \
+latest_sc=$(curl -s --max-time 10 -X POST "$PP_API_BASE/api/open/message/list/" \
     -H 'Content-Type: application/json' \
     -H "access-key: $access_key" \
     -d @"$PP_LIST_BODY" 2>/dev/null | grep -o '"shortCode":"[^"]*"' | head -1 | sed 's/"shortCode":"//;s/"//')
@@ -32,7 +32,7 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
     if [ $(date +%s) -ge $dl ]; then echo "TIMEOUT"; exit 1; fi
 
     echo "--- attempt $i ---"
-    resp=$(curl -s --max-time 10 -X POST "$PP_API_BASE/api/open/message/list" \
+    resp=$(curl -s --max-time 10 -X POST "$PP_API_BASE/api/open/message/list/" \
         -H 'Content-Type: application/json' \
         -H "access-key: $access_key" \
         -d @"$PP_LIST_BODY" 2>/dev/null)

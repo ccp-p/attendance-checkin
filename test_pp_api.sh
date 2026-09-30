@@ -6,7 +6,7 @@ KEY=$(curl -s --max-time 10 -X POST https://www.pushplus.plus/api/common/openApi
   -d "{\"token\":\"$TOKEN\",\"secretKey\":\"$SECRET\"}" \
   | grep -o '"accessKey":"[^"]*"' | head -1 | sed 's/"accessKey":"//;s/"//')
 echo "KEY=$KEY"
-RESP=$(curl -s --max-time 10 -X POST https://www.pushplus.plus/api/open/message/list \
+RESP=$(curl -s --max-time 10 -X POST https://www.pushplus.plus/api/open/message/list/ \
   -H Content-Type:application/json \
   -H "access-key: $KEY" \
   -d '{"current":1,"pageSize":3}')

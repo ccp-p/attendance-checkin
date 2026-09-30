@@ -43,11 +43,19 @@ TO_CODE=210
 TO_PUSHPLUS_DELAY=8
 TO_WX_LOAD=2
 
-# UI coordinates calibrated on device (1080x2376)
-COORD_TRUST_BACK="86 203"     # 可信认证 左上角返回按钮
-COORD_WORKBENCH_TAB="324 2295"
-COORD_ATTENDANCE_CARD="675 1640"
-COORD_ATTENDANCE_BUTTON="540 1300"
+# UI coordinates calibrated on device (1080x2376).
+# K40 (1080x2400) gets its own tab/card Y: bottom nav sits 24px lower.
+MODEL=$(getprop ro.product.model)
+case "$MODEL" in
+    M2012K11AC)
+        COORD_WORKBENCH_TAB="324 2319"
+        COORD_ATTENDANCE_CARD="675 1660"
+        ;;
+    *)  # PJZ110 (1080x2376)
+        COORD_WORKBENCH_TAB="324 2295"
+        COORD_ATTENDANCE_CARD="675 1640"
+        ;;
+esac
 
 # pushplus polling interval (seconds between API calls)
 TO_PP_POLL=5
@@ -160,6 +168,25 @@ click_text() {
     y2=$(echo "$nums" | cut -d, -f4)
     cx=$(( (x1 + x2) / 2 ))
     cy=$(( (y1 + y2) / 2 ))
+    # MIUI reports [0,0][0,0] for bottom-nav text nodes while their sibling
+    # container (tab_0..tab_3) carries real bounds right before them in the
+    # XML. Use that container's center when the text node is 0-bounded.
+    if [ "$cx" -eq 0 ] && [ "$cy" -eq 0 ]; then
+        local pnums px1 py1 px2 py2
+        pnums=$(cat "$UI_DUMP" | sed 's/<node/\n<node/g' | sed -n "/text=\"$text\"/{=;q}" | head -1)
+        if [ -n "$pnums" ]; then
+            pnums=$(cat "$UI_DUMP" | sed 's/<node/\n<node/g' | head -n "$pnums" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | grep -v '\[0,0\]\[0,0\]' | tail -1)
+            if [ -n "$pnums" ]; then
+                px1=$(echo "$pnums" | sed 's/[^0-9,]//g' | cut -d, -f1)
+                py1=$(echo "$pnums" | sed 's/[^0-9,]//g' | cut -d, -f2)
+                px2=$(echo "$pnums" | sed 's/[^0-9,]//g' | cut -d, -f3)
+                py2=$(echo "$pnums" | sed 's/[^0-9,]//g' | cut -d, -f4)
+                cx=$(( (px1 + px2) / 2 ))
+                cy=$(( (py1 + py2) / 2 ))
+                log "  $text: 0-bounds text node; using container at $cx,$cy"
+            fi
+        fi
+    fi
     input tap "$cx" "$cy"
     log "  click $text at $cx,$cy"
     return 0
@@ -235,11 +262,10 @@ click_cached() {
     dump_ui || return 1
     local coords
     coords=$(find_bounds "$text")
-    if [ -z "$coords" ]; then
-        log "  not found: $text"
+    if [ -z "$coords" ] || [ "$coords" = "0 0" ]; then
+        log "  not found (or 0-bounds): $text"
         return 1
     fi
-    echo "$coords" > /sdcard/checkin/.cache_"$cv"
     input tap $coords
     log "  click $text at $coords (cached)"
     invalidate_dump
@@ -330,7 +356,7 @@ get_code() {
 
         log "  pp: polling (attempt $i)..."
         local resp
-        resp=$(curl -s --max-time 10 -X POST "$PP_API_BASE/api/open/message/list" \
+        resp=$(curl -s --max-time 10 -X POST "$PP_API_BASE/api/open/message/list/" \
             -H 'Content-Type: application/json' \
             -H "access-key: $access_key" \
             -d @"$PP_LIST_BODY" 2>/dev/null)
@@ -819,7 +845,7 @@ main() {
     pp_pre_key=$(get_pp_access_key)
     if [ -n "$pp_pre_key" ]; then
         echo '{"current":1,"pageSize":3}' > "$PP_LIST_BODY"
-        curl -s --max-time 10 -X POST "$PP_API_BASE/api/open/message/list" \
+        curl -s --max-time 10 -X POST "$PP_API_BASE/api/open/message/list/" \
             -H 'Content-Type: application/json' \
             -H "access-key: $pp_pre_key" \
             -d @"$PP_LIST_BODY" 2>/dev/null | grep -o '"shortCode":"[^"]*"' | head -1 | sed 's/"shortCode":"//;s/"//' > /sdcard/pp_baseline.txt
@@ -845,6 +871,15 @@ main() {
         log "  no SMS in first window, tap fallback coord and wait once more"
         input tap 870 1207
         code=$(get_code "870 1207")
+        if [ -n "$code" ]; then
+            # The fallback tap (870,1207) sits above the input row and
+            # steals focus from the code EditText (first get-code tap at
+            # 870,1303 keeps it). Re-focus the input field so the blind
+            # input text below lands in the box.
+            log "  re-focusing code input after fallback tap"
+            input tap 496 1306
+            sleep 0.5
+        fi
         [ -z "$code" ] && fail "no code after fallback tap"
     fi
     log "  got code: $code"
@@ -894,4 +929,9 @@ main() {
     fi
 }
 
+# Isolated-test hook: source this file with CHECKIN_LIB_ONLY=1 to reuse
+# its functions without running the full checkin flow.
+if [ "${CHECKIN_LIB_ONLY:-0}" = "1" ]; then
+    return 0
+fi
 main "$@"

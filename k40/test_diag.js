@@ -1,0 +1,18 @@
+"auto";
+files.write("/sdcard/attendance_checkin/simple_test.txt", "step1: script start\n");
+files.append("/sdcard/attendance_checkin/simple_test.txt", "step2: require config\n");
+var config = require("./config.js");
+files.append("/sdcard/attendance_checkin/simple_test.txt", "step3: config ok, logFile=" + config.logFile + "\n");
+files.append("/sdcard/attendance_checkin/simple_test.txt", "step4: require logger\n");
+var logger = require("./lib/logger.js");
+files.append("/sdcard/attendance_checkin/simple_test.txt", "step5: logger ok\n");
+logger.init();
+files.append("/sdcard/attendance_checkin/simple_test.txt", "step6: logger.init ok\n");
+files.append("/sdcard/attendance_checkin/simple_test.txt", "step7: require a11y_guard\n");
+var a11y = require("./a11y_guard.js");
+files.append("/sdcard/attendance_checkin/simple_test.txt", "step8: a11y_guard ok\n");
+var r = a11y.ensure(3000);
+files.append("/sdcard/attendance_checkin/simple_test.txt", "step9: a11y.ensure=" + r + "\n");
+files.append("/sdcard/attendance_checkin/simple_test.txt", "step10: require scenes\n");
+var scenes = require("./scenes.js");
+files.append("/sdcard/attendance_checkin/simple_test.txt", "step11: scenes ok\n");

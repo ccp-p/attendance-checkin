@@ -8,3 +8,9 @@ log.txt
 log.txt.old
 node_modules/
 .DS_Store
+
+k40/config.js
+autojs6_backup/
+*.apk
+lsposed_sep.sh
+yqx_base.apk

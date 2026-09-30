@@ -1,0 +1,16 @@
+"auto";
+files.write("/sdcard/attendance_checkin/simple_test.txt", "test start\n");
+var config = require("./config.js");
+var logger = require("./lib/logger.js");
+logger.init();
+var a11y = require("./a11y_guard.js");
+files.append("/sdcard/attendance_checkin/simple_test.txt", "bound before kill: " + a11y.serviceBound() + "\n");
+var cmdArr = java.lang.reflect.Array.newInstance(java.lang.String, 3);
+cmdArr[0] = "su"; cmdArr[1] = "-c"; cmdArr[2] = "settings put secure enabled_accessibility_services ''; settings put secure accessibility_enabled 0";
+new java.lang.ProcessBuilder(cmdArr).start().waitFor();
+sleep(2000);
+files.append("/sdcard/attendance_checkin/simple_test.txt", "bound after kill: " + a11y.serviceBound() + "\n");
+files.append("/sdcard/attendance_checkin/simple_test.txt", "calling ensure...\n");
+var r = a11y.ensure(30000);
+files.append("/sdcard/attendance_checkin/simple_test.txt", "ensure result: " + r + "\n");
+files.append("/sdcard/attendance_checkin/simple_test.txt", "bound after heal: " + a11y.serviceBound() + "\n");

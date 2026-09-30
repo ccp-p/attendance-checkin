@@ -1,0 +1,1 @@
+"auto";`nvar logger = require("./lib/logger.js");`nlogger.init();`nlogger.info("test_a11y start");`nvar a11y = require("./a11y_guard.js");`nlogger.info("a11y_guard loaded");`nvar r = a11y.ensure(5000);`nlogger.info("a11y.ensure result: " + r);

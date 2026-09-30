@@ -1,0 +1,1 @@
+"auto";`ntry {`nvar m = require("./test_mod.js");`nfiles.write("/sdcard/attendance_checkin/simple_test.txt", "ok: " + m.hello() + "\n");`n} catch(e) {`nfiles.write("/sdcard/attendance_checkin/simple_test.txt", "ERR: " + e + "\n" + e.stack + "\n");`n}

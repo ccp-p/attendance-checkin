@@ -129,7 +129,7 @@ function fetchLatestMessage() {
         accessKey = getAccessKey();
         if (!accessKey) return null;
     }
-    var body = httpPost(PP_API_BASE + "/api/open/message/list", {
+    var body = httpPost(PP_API_BASE + "/api/open/message/list/", {
         current: 1,
         pageSize: 5
     }, {
@@ -140,7 +140,7 @@ function fetchLatestMessage() {
         log("accessKey expired, refreshing...");
         accessKey = getAccessKey();
         if (!accessKey) return null;
-        body = httpPost(PP_API_BASE + "/api/open/message/list", {
+        body = httpPost(PP_API_BASE + "/api/open/message/list/", {
             current: 1,
             pageSize: 5
         }, {

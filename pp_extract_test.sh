@@ -19,14 +19,14 @@ echo "KEY=$access_key"
 if [ -z "$access_key" ]; then echo "FAILED"; exit 1; fi
 
 # Get baseline shortCode
-latest_sc=$(curl -s --max-time 10 -X POST "$PP_API_BASE/api/open/message/list" \
+latest_sc=$(curl -s --max-time 10 -X POST "$PP_API_BASE/api/open/message/list/" \
     -H 'Content-Type: application/json' \
     -H "access-key: $access_key" \
     -d @"$PP_LIST_BODY" 2>/dev/null | grep -o '"shortCode":"[^"]*"' | head -1 | sed 's/"shortCode":"//;s/"//')
 echo "=== BASELINE SC: $latest_sc ==="
 
 # Now poll and extract
-resp=$(curl -s --max-time 10 -X POST "$PP_API_BASE/api/open/message/list" \
+resp=$(curl -s --max-time 10 -X POST "$PP_API_BASE/api/open/message/list/" \
     -H 'Content-Type: application/json' \
     -H "access-key: $access_key" \
     -d @"$PP_LIST_BODY" 2>/dev/null)

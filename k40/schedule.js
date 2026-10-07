@@ -33,10 +33,6 @@ function tryRun() {
         logger.ok("定时打卡成功!");
         return true;
     }
-    if (r.attendance && r.attendance.restDay) {
-        logger.ok("定时: 今天休息, 无需打卡");
-        return true;
-    }
     logger.error("定时打卡在 " + failed + " 环节失败");
     return false;
 }

@@ -184,14 +184,10 @@ var scenes = {
         }
         if (!opened) { save("attendance", { ok: false }); return { ok: false }; }
 
-        // rest-day gate: attendance page loaded but no punch buttons after
-        // the 20s wait -> today is off (调休补班日按钮照常, 休息日无按钮).
         var btn = scenes._waitForAny([config.text.checkin, config.text.checkout], 20000);
         if (!btn) {
-            var rest = scenes._isRestDay();
-            save("attendance", { ok: false, restDay: rest,
-                reason: rest ? "rest_day" : "punch button not found" });
-            return { ok: false, restDay: rest, reason: rest ? "rest_day" : "no punch button" };
+            save("attendance", { ok: false, reason: "punch button not found" });
+            return { ok: false, reason: "no punch button" };
         }
         save("attendance", { ok: true });
         return { ok: true };
@@ -369,10 +365,13 @@ var scenes = {
             }
         }
         var st = load("getcode");
-        st.ok = countdown;
-        if (!countdown) st.reason = "no countdown after getCode tap";
+        // Button was clicked - assume the SMS was triggered even if the
+        // countdown text is not detected (webview rendering varies).
+        // ppapi() confirms the actual delivery via new-message baseline.
+        st.ok = true;
+        if (!countdown) st.reason = "countdown not detected (may still be sent)";
         save("getcode", st);
-        return { ok: countdown, baseline: baseline };
+        return { ok: true, baseline: baseline, countdown: countdown };
     },
 
     // S7: poll pushplus message list API for a NEW message, extract code
@@ -483,6 +482,45 @@ var scenes = {
             // back loop exhausted without reaching attendance - keep
             // pressing back in result() via _verifyAttendanceSlot
             logger.warn("submit: trust layers not fully exited");
+        }
+        // After login, the session is now valid. The attendance page is in
+        // front but the punch was NOT recorded yet (the first 签到 tap only
+        // opened the login flow). Tap the punch button again - with a live
+        // session it goes through directly (no login prompt).
+        if (landed) {
+            var punched = false;
+            for (var p = 0; p < 5 && !punched; p++) {
+                var btn = text(config.text.checkin).findOne(3000) ||
+                          text(config.text.checkout).findOne(3000);
+                if (btn) {
+                    var bb = btn.bounds();
+                    click(bb.centerX(), bb.centerY());
+                    logger.info("submit: re-tap punch button after login");
+                    sleep(3000);
+                    // server may reject with "打卡失败/无需打卡" (holiday).
+                    // Dismiss the dialog and treat as no-op, not a failure.
+                    var noNeed = text("无需打卡").findOne(1500) ||
+                                 textContains("无需").findOne(1000);
+                    if (noNeed) {
+                        // Server rejected - may be transient (day not open yet,
+                        // location not ready) or a real holiday. Treat as NOT
+                        // punched: dismiss and let the outer retry (120s) re-run.
+                        logger.warn("submit: server rejected punch (no-need popup), will retry");
+                        var okBtn = text("确定").findOne(2000);
+                        if (okBtn) { var ob = okBtn.bounds(); click(ob.centerX(), ob.centerY()); }
+                        punched = false;
+                        break;
+                    }
+                    // check if slot now shows a timestamp
+                    var v = scenes._verifyAttendanceSlot();
+                    if (v.ok) { punched = true; logger.ok("submit: punch confirmed: " + v.reason); }
+                } else {
+                    sleep(2000);
+                }
+            }
+            if (!punched) logger.warn("submit: punch not confirmed after re-tap");
+            save("submit", { ok: true, trusted: trusted, landed: landed, punched: punched });
+            return { ok: true, trusted: trusted, landed: landed, punched: punched };
         }
         save("submit", { ok: true, trusted: trusted, landed: landed });
         return { ok: true, trusted: trusted, landed: landed };
@@ -825,15 +863,7 @@ var scenes = {
                 return results;
             }
             if (!r.ok) {
-                if (r.restDay) {
-                    logger.ok("今天休息, 无需打卡 (rest day, chain ended cleanly)");
-                    // write a result marker so the cron wrapper knows the
-                    // run COMPLETED (nothing to do) - no shell fallback
-                    save("result", { ok: true, restDay: true,
-                        reason: "rest day, no checkin needed" });
-                } else {
-                    logger.error("chain stopped at scene: " + name);
-                }
+                logger.error("chain stopped at scene: " + name);
                 break;
             }
         }

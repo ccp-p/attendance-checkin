@@ -764,28 +764,33 @@ var scenes = {
             return Bitmap.createBitmap(bmp, 0, y0, bmp.getWidth(), y1 - y0);
         }
         try {
-            // pass 1: eighth res, middle 70% band (drops status bar + nav)
-            var o1 = new BitmapFactory.Options(); o1.inSampleSize = 8;
+            // 2026-10-08 clarity upgrade: crop off the TOP chrome (status
+            // bar + app title ~16% of height) and the bottom system nav,
+            // keep the attendance card band. Ladder maximizes resolution
+            // within the same base64 budget:
+            //   1. quarter res + top-crop band, q50
+            //   2. quarter res + top-crop band, q25
+            //   3. eighth res + top-crop band, q70  (fallback)
+            var o1 = new BitmapFactory.Options(); o1.inSampleSize = 4;
             var bmp = BitmapFactory.decodeFile(path, o1);
             if (!bmp) return null;
-            var band = cropBand(bmp, 0.15, 0.85);
-            b64 = encode(band, 30);
+            var band = cropBand(bmp, 0.16, 0.96);
+            b64 = encode(band, 50);
             if (b64.length <= LIMIT) { bmp.recycle(); band.recycle(); return b64; }
             band.recycle();
-            // pass 2: eighth res, middle 50% band, lower quality
-            var mid = cropBand(bmp, 0.25, 0.75);
-            b64 = encode(mid, 20);
-            if (b64.length <= LIMIT) { bmp.recycle(); mid.recycle(); return b64; }
-            mid.recycle();
-            // pass 3: whatever it takes - sixteenth res middle band
-            var o2 = new BitmapFactory.Options(); o2.inSampleSize = 16;
-            var tiny = BitmapFactory.decodeFile(path, o2);
-            if (tiny) {
-                var tband = cropBand(tiny, 0.2, 0.8);
-                b64 = encode(tband, 20);
-                tiny.recycle(); tband.recycle();
-            }
+            b64 = encode(cropBand(bmp, 0.16, 0.96), 25);
+            if (b64.length <= LIMIT) { bmp.recycle(); return b64; }
             bmp.recycle();
+            var o2 = new BitmapFactory.Options(); o2.inSampleSize = 8;
+            var bmp8 = BitmapFactory.decodeFile(path, o2);
+            if (bmp8) {
+                var band8 = cropBand(bmp8, 0.16, 0.96);
+                b64 = encode(band8, 70);
+                if (b64.length <= LIMIT) { bmp8.recycle(); band8.recycle(); return b64; }
+                band8.recycle();
+                b64 = encode(cropBand(bmp8, 0.16, 0.96), 30);
+                bmp8.recycle();
+            }
             return b64;   // even if oversized - better than nothing
         } catch (e) { logger.warn("fitBase64: " + e); return null; }
     },

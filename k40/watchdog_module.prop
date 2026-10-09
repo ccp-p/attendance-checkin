@@ -1,0 +1,6 @@
+id=checkin_watchdog
+name=Attendance Checkin Watchdog
+version=1.0
+versionCode=1
+author=ccp
+description=Init-managed auto-restarting watchdog for daily checkin (07:20/17:30)
